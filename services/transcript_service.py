@@ -83,66 +83,68 @@ class TranscriptService:
             # Continue to direct API fallback
             pass
 
-        # 2. Second attempt: Direct youtube_transcript_api with broader language support
+        # 2. Second attempt: Direct youtube_transcript_api with broader language support & auto-translation
         if not transcript_text.strip():
+            last_error = None
             try:
-                # Support both modern (v1.0+) and legacy (v0.x) youtube_transcript_api
                 api = YouTubeTranscriptApi() if callable(YouTubeTranscriptApi) else None
                 
-                # Try modern instance api.fetch
-                if api and hasattr(api, 'fetch'):
-                    try:
-                        fetched = api.fetch(video_id, languages=['en', 'en-US', 'en-GB'])
-                        snippets = fetched.snippets if hasattr(fetched, 'snippets') else fetched
-                        transcript_text = " ".join([s.text if hasattr(s, 'text') else str(s.get('text', '')) for s in snippets])
-                    except Exception:
-                        try:
-                            fetched = api.fetch(video_id)
-                            snippets = fetched.snippets if hasattr(fetched, 'snippets') else fetched
-                            transcript_text = " ".join([s.text if hasattr(s, 'text') else str(s.get('text', '')) for s in snippets])
-                        except Exception:
-                            pass
-
-                # Try modern instance api.list
-                if not transcript_text.strip() and api and hasattr(api, 'list'):
+                # Fetch available transcript list
+                if api and hasattr(api, 'list'):
                     try:
                         transcript_list = api.list(video_id)
                         t_obj = None
+                        
+                        # Priority 1: English variants (manual or auto-generated)
                         try:
-                            t_obj = transcript_list.find_transcript(['en', 'en-US', 'en-GB'])
+                            t_obj = transcript_list.find_transcript(['en', 'en-US', 'en-GB', 'en-IN', 'en-CA', 'en-AU'])
                         except Exception:
+                            pass
+
+                        # Priority 2: Auto-translate any available transcript to English
+                        if not t_obj:
+                            for t in transcript_list:
+                                if getattr(t, 'is_translatable', False):
+                                    try:
+                                        t_obj = t.translate('en')
+                                        break
+                                    except Exception:
+                                        pass
+
+                        # Priority 3: Any available transcript in its original language
+                        if not t_obj:
                             for t in transcript_list:
                                 t_obj = t
                                 break
+
                         if t_obj:
                             fetched = t_obj.fetch()
-                            snippets = fetched.snippets if hasattr(fetched, 'snippets') else fetched
-                            transcript_text = " ".join([s.text if hasattr(s, 'text') else str(s.get('text', '')) for s in snippets])
-                    except Exception:
-                        pass
+                            snippets = getattr(fetched, 'snippets', fetched)
+                            if hasattr(fetched, 'to_raw_data'):
+                                raw_snippets = fetched.to_raw_data()
+                                transcript_text = " ".join([s.get('text', '') for s in raw_snippets if s.get('text')])
+                            else:
+                                transcript_text = " ".join([getattr(s, 'text', '') if hasattr(s, 'text') else str(s.get('text', '')) for s in snippets])
+                    except Exception as le:
+                        last_error = str(le)
 
-                # Try legacy classmethods (v0.x)
-                if not transcript_text.strip():
-                    if hasattr(YouTubeTranscriptApi, 'get_transcript'):
+                # Fallback to direct fetch if list was not used or returned empty
+                if not transcript_text.strip() and api and hasattr(api, 'fetch'):
+                    for lang_option in [['en', 'en-US', 'en-GB', 'en-IN'], None]:
                         try:
-                            items = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'en-US', 'en-GB'])
-                            transcript_text = " ".join([item.get('text', '') for item in items])
-                        except Exception:
-                            try:
-                                items = YouTubeTranscriptApi.get_transcript(video_id)
-                                transcript_text = " ".join([item.get('text', '') for item in items])
-                            except Exception:
-                                pass
-
-                    elif hasattr(YouTubeTranscriptApi, 'list_transcripts'):
-                        try:
-                            t_list = YouTubeTranscriptApi.list_transcripts(video_id)
-                            for t in t_list:
-                                items = t.fetch()
-                                transcript_text = " ".join([item.get('text', '') for item in items])
+                            if lang_option:
+                                fetched = api.fetch(video_id, languages=lang_option)
+                            else:
+                                fetched = api.fetch(video_id)
+                            if hasattr(fetched, 'to_raw_data'):
+                                transcript_text = " ".join([s.get('text', '') for s in fetched.to_raw_data() if s.get('text')])
+                            else:
+                                snippets = getattr(fetched, 'snippets', fetched)
+                                transcript_text = " ".join([getattr(s, 'text', '') if hasattr(s, 'text') else str(s.get('text', '')) for s in snippets])
+                            if transcript_text.strip():
                                 break
-                        except Exception:
-                            pass
+                        except Exception as fe:
+                            last_error = str(fe)
 
             except TranscriptsDisabled:
                 return {
@@ -154,7 +156,7 @@ class TranscriptService:
                 return {
                     'success': False,
                     'video_id': video_id,
-                    'error': "No captions or transcript found for this video. Please try a video with English subtitles."
+                    'error': "No captions or transcript found for this video. Please try a video with English or auto-generated subtitles."
                 }
             except VideoUnavailable:
                 return {
@@ -162,25 +164,51 @@ class TranscriptService:
                     'video_id': video_id,
                     'error': "The video is unavailable, private, or does not exist."
                 }
-            except CouldNotRetrieveTranscript:
+            except CouldNotRetrieveTranscript as cne:
+                err_str = str(cne)
+                if "IpBlocked" in err_str or "RequestBlocked" in err_str or "blocked" in err_str.lower():
+                    return {
+                        'success': False,
+                        'video_id': video_id,
+                        'error': "YouTube blocked requests from cloud server IP (Vercel). Run the app locally via 'python app.py' on your computer where it works 100%!"
+                    }
                 return {
                     'success': False,
                     'video_id': video_id,
-                    'error': "Could not retrieve the video transcript. It may be restricted or have no subtitles."
+                    'error': f"Could not retrieve video transcript: {err_str}"
                 }
             except Exception as e:
+                err_str = str(e)
+                if "IpBlocked" in err_str or "RequestBlocked" in err_str or "blocked" in err_str.lower():
+                    return {
+                        'success': False,
+                        'video_id': video_id,
+                        'error': "YouTube blocked requests from cloud server IP (Vercel). Run the app locally via 'python app.py' on your computer where it works 100%!"
+                    }
                 return {
                     'success': False,
                     'video_id': video_id,
-                    'error': f"Failed to retrieve transcript: {str(e)}"
+                    'error': f"Failed to retrieve transcript: {err_str}"
                 }
 
         cleaned_transcript = cls.clean_text(transcript_text)
         if not cleaned_transcript:
+            if last_error:
+                if "IpBlocked" in last_error or "RequestBlocked" in last_error or "blocked" in last_error.lower():
+                    return {
+                        'success': False,
+                        'video_id': video_id,
+                        'error': "YouTube blocked requests from cloud server IP (Vercel). Run the app locally via 'python app.py' on your computer where it works 100%!"
+                    }
+                return {
+                    'success': False,
+                    'video_id': video_id,
+                    'error': f"Could not extract transcript: {last_error}"
+                }
             return {
                 'success': False,
                 'video_id': video_id,
-                'error': "The video transcript is empty or could not be decoded."
+                'error': "No subtitles found for this video. Please try an educational video with subtitles enabled."
             }
 
         return {
