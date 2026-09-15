@@ -39,6 +39,15 @@ def create_app(config_class=Config):
     # Ensure database tables exist
     with app.app_context():
         db.create_all()
+        # On Vercel serverless, auto-seed sample video so UI is populated on fresh boot
+        if Config.IS_VERCEL:
+            try:
+                from models.database import Video
+                if Video.query.count() == 0:
+                    from seed_data import seed
+                    seed()
+            except Exception:
+                pass
 
     return app
 

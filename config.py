@@ -10,9 +10,18 @@ class Config:
     """Application configuration settings."""
     SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-youtube-learning-assistant')
     
-    # SQLite Database (always resolve to absolute path)
-    _db_path = (BASE_DIR / "youtube_learning.db").as_posix()
-    SQLALCHEMY_DATABASE_URI = f"sqlite:///{_db_path}"
+    # Check if running in Vercel / AWS Lambda serverless environment
+    IS_VERCEL = bool(os.getenv('VERCEL') or os.getenv('AWS_LAMBDA_FUNCTION_NAME'))
+
+    # SQLite Database (write to /tmp on serverless environments)
+    if IS_VERCEL:
+        SQLALCHEMY_DATABASE_URI = "sqlite:////tmp/youtube_learning.db"
+        CHROMA_PERSIST_DIR = "/tmp/chroma_db"
+    else:
+        _db_path = (BASE_DIR / "youtube_learning.db").as_posix()
+        SQLALCHEMY_DATABASE_URI = f"sqlite:///{_db_path}"
+        CHROMA_PERSIST_DIR = os.getenv('CHROMA_PERSIST_DIR', str(BASE_DIR / 'chroma_db'))
+
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
     # LLM Provider ('groq' or 'openai')
@@ -30,9 +39,6 @@ class Config:
     # Embeddings ('local' for free ONNX or 'openai')
     EMBEDDING_PROVIDER = os.getenv('EMBEDDING_PROVIDER', 'local').lower()
     EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small')
-    
-    # ChromaDB
-    CHROMA_PERSIST_DIR = os.getenv('CHROMA_PERSIST_DIR', str(BASE_DIR / 'chroma_db'))
     
     @classmethod
     def is_ai_configured(cls) -> bool:

@@ -21,7 +21,10 @@ class ChromaService:
         if cls._client is None:
             persist_dir = Config.CHROMA_PERSIST_DIR
             os.makedirs(persist_dir, exist_ok=True)
-            cls._client = chromadb.PersistentClient(path=persist_dir)
+            cls._client = chromadb.PersistentClient(
+                path=persist_dir,
+                settings=Settings(anonymized_telemetry=False)
+            )
         return cls._client
 
     @classmethod
