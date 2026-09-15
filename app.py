@@ -44,7 +44,8 @@ def create_app(config_class=Config):
     @app.errorhandler(500)
     def internal_error(e):
         db.session.rollback()
-        return render_template('base.html', error_title="500 - Server Error", error_msg="An unexpected error occurred. Please try again."), 500
+        import traceback
+        return render_template('base.html', error_title="500 - Server Error", error_msg=f"{str(e)} : {traceback.format_exc()}"), 500
 
     # Ensure database tables exist
     with app.app_context():
