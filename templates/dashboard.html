@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — LearnTube AI{% endblock %}
+
+{% block content %}
+<div class="container py-3">
+    <!-- Header -->
+    <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-2 mb-4">
+        <div>
+            <h2 class="fw-bold mb-1">Learning Dashboard</h2>
+            <p class="text-muted small mb-0">Track your courses, revision kits, and learning progress.</p>
+        </div>
+        <a href="{{ url_for('video.index') }}" class="btn btn-primary btn-sm">
+            <i class="bi bi-plus-lg me-1"></i> Add Another Video
+        </a>
+    </div>
+
+    <!-- Metrics Row -->
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3">
+            <div class="card-modern p-3">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="text-muted small fw-semibold">Total Videos</span>
+                    <i class="bi bi-collection-play text-primary fs-5"></i>
+                </div>
+                <h3 class="fw-bold mb-0">{{ total_videos }}</h3>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card-modern p-3">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="text-muted small fw-semibold">Completed</span>
+                    <i class="bi bi-check-circle-fill text-success fs-5"></i>
+                </div>
+                <h3 class="fw-bold mb-0 text-success">{{ completed_videos }}</h3>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card-modern p-3">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="text-muted small fw-semibold">Smart Notes</span>
+                    <i class="bi bi-journal-check text-info fs-5"></i>
+                </div>
+                <h3 class="fw-bold mb-0 text-info">{{ total_notes }}</h3>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card-modern p-3">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="text-muted small fw-semibold">Flashcards</span>
+                    <i class="bi bi-card-checklist text-warning fs-5"></i>
+                </div>
+                <h3 class="fw-bold mb-0 text-warning">{{ total_flashcards }}</h3>
+            </div>
+        </div>
+    </div>
+
+    <!-- Progress Bar -->
+    <div class="card-modern p-3 mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="fw-semibold small">Overall Course Completion</span>
+            <span class="fw-bold text-primary">{{ progress_percent }}%</span>
+        </div>
+        <div class="progress" style="height: 10px;">
+            <div class="progress-bar bg-primary" role="progressbar" style="width: {{ progress_percent }}%;" aria-valuenow="{{ progress_percent }}" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+    </div>
+
+    <!-- Filter Pills by Course/Topic -->
+    {% if courses %}
+    <div class="d-flex align-items-center gap-2 mb-4 overflow-x-auto pb-2">
+        <span class="small fw-semibold text-muted me-1"><i class="bi bi-funnel me-1"></i>Courses:</span>
+        <a href="{{ url_for('video.dashboard') }}" class="btn btn-sm {{ 'btn-primary' if not current_course else 'btn-outline-secondary' }} rounded-pill">
+            All ({{ total_videos }})
+        </a>
+        {% for course in courses %}
+            <a href="{{ url_for('video.dashboard', course=course) }}" class="btn btn-sm {{ 'btn-primary' if current_course == course else 'btn-outline-secondary' }} rounded-pill text-nowrap">
+                {{ course }}
+            </a>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Video List / Table -->
+    {% if videos %}
+    <div class="card-modern overflow-hidden">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 70px;">Preview</th>
+                        <th>Video Title &amp; Course</th>
+                        <th>Status</th>
+                        <th>AI Assets</th>
+                        <th class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for v in videos %}
+                    <tr>
+                        <td>
+                            <img 
+                                src="https://img.youtube.com/vi/{{ v.youtube_video_id }}/default.jpg" 
+                                alt="{{ v.title }}" 
+                                class="rounded"
+                                style="width: 60px; height: 42px; object-fit: cover;"
+                            >
+                        </td>
+                        <td>
+                            <a href="{{ url_for('video.view_video', video_id=v.id) }}" class="fw-semibold text-dark text-decoration-none">
+                                {{ v.title }}
+                            </a>
+                            <div class="d-flex align-items-center gap-2 mt-1">
+                                <span class="badge badge-course small">{{ v.course_name }}</span>
+                                <small class="text-muted"><i class="bi bi-clock me-1"></i>{{ v.created_at.strftime('%b %d, %Y') if v.created_at else '' }}</small>
+                            </div>
+                        </td>
+                        <td>
+                            <form action="{{ url_for('video.toggle_complete', video_id=v.id) }}" method="POST" class="d-inline">
+                                {% if v.completed %}
+                                    <button type="submit" class="btn btn-sm btn-success-subtle text-success border border-success-subtle rounded-pill py-0 px-2" title="Click to mark in-progress">
+                                        <i class="bi bi-check-circle-fill me-1"></i> Completed
+                                    </button>
+                                {% else %}
+                                    <button type="submit" class="btn btn-sm btn-secondary-subtle text-secondary border border-secondary-subtle rounded-pill py-0 px-2" title="Click to mark completed">
+                                        <i class="bi bi-circle me-1"></i> In Progress
+                                    </button>
+                                {% endif %}
+                            </form>
+                        </td>
+                        <td>
+                            <div class="d-flex gap-1">
+                                {% if v.notes %}
+                                    <span class="badge bg-info-subtle text-info" title="Notes generated"><i class="bi bi-journal-text"></i> Notes</span>
+                                {% endif %}
+                                {% if v.flashcards.count() > 0 %}
+                                    <span class="badge bg-warning-subtle text-warning" title="{{ v.flashcards.count() }} flashcards"><i class="bi bi-card-checklist"></i> {{ v.flashcards.count() }} Cards</span>
+                                {% endif %}
+                            </div>
+                        </td>
+                        <td class="text-end">
+                            <div class="btn-group btn-group-sm">
+                                <a href="{{ url_for('video.view_video', video_id=v.id) }}" class="btn btn-outline-primary" title="Open Video Hub">
+                                    <i class="bi bi-play-circle me-1"></i> Open
+                                </a>
+                                <a href="{{ url_for('notes.view_notes', video_id=v.id) }}" class="btn btn-outline-secondary" title="View Smart Notes">
+                                    <i class="bi bi-file-text"></i>
+                                </a>
+                                <a href="{{ url_for('flashcards.view_flashcards', video_id=v.id) }}" class="btn btn-outline-secondary" title="Practice Flashcards">
+                                    <i class="bi bi-card-checklist"></i>
+                                </a>
+                                <a href="{{ url_for('chatbot.chat_view', video_id=v.id) }}" class="btn btn-outline-secondary" title="Ask AI Chatbot">
+                                    <i class="bi bi-chat-dots"></i>
+                                </a>
+                                <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteModal{{ v.id }}" title="Delete Video">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+
+                            <!-- Delete Confirmation Modal -->
+                            <div class="modal fade" id="deleteModal{{ v.id }}" tabindex="-1" aria-hidden="true">
+                                <div class="modal-dialog modal-sm">
+                                    <div class="modal-content text-start">
+                                        <div class="modal-header">
+                                            <h6 class="modal-title fw-bold">Confirm Delete</h6>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                        </div>
+                                        <div class="modal-body small">
+                                            Delete <strong>{{ v.title }}</strong> and all its notes, flashcards, chat history, and vector embeddings?
+                                        </div>
+                                        <div class="modal-footer">
+                                            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                                            <form action="{{ url_for('video.delete_video', video_id=v.id) }}" method="POST">
+                                                <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <div class="card-modern text-center py-5">
+        <div class="display-6 text-muted mb-3"><i class="bi bi-folder2-open"></i></div>
+        <h5>No videos found in this view</h5>
+        <p class="text-muted small mb-3">Add a video or clear your course filter.</p>
+        <a href="{{ url_for('video.index') }}" class="btn btn-primary btn-sm">Add New Video</a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+
+{% block title %}LearnTube AI — Turn YouTube Videos Into Smart Notes & Flashcards{% endblock %}
+
+{% block content %}
+<div class="container py-3">
+    <!-- Hero Banner & URL Input -->
+    <div class="hero-card p-4 p-md-5 mb-5 text-center">
+        <div class="max-w-700 mx-auto" style="max-width: 760px;">
+            <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-3 py-2 rounded-pill mb-3">
+                <i class="bi bi-stars me-1"></i> LLM-Powered Learning Platform
+            </span>
+            <h1 class="display-5 fw-bold mb-3">Learn Smarter from YouTube</h1>
+            <p class="lead text-muted mb-4">
+                Paste any educational YouTube video link. Extract transcripts, generate structured smart study notes, create revision flashcards, and chat with an AI grounded in the video content.
+            </p>
+
+            <form id="analyzeForm" action="{{ url_for('video.analyze_video') }}" method="POST" class="text-start">
+                <div class="card p-3 shadow-sm border-0 mb-3 bg-white rounded-3">
+                    <div class="row g-2 align-items-center">
+                        <div class="col-12 col-md-7">
+                            <label class="form-label small fw-semibold text-muted mb-1">
+                                <i class="bi bi-youtube text-danger me-1"></i> YouTube Video URL
+                            </label>
+                            <input 
+                                type="url" 
+                                name="youtube_url" 
+                                class="form-control" 
+                                placeholder="https://www.youtube.com/watch?v=..." 
+                                required
+                                autofocus
+                            >
+                        </div>
+                        <div class="col-12 col-md-5">
+                            <label class="form-label small fw-semibold text-muted mb-1">
+                                <i class="bi bi-folder2-open me-1"></i> Course / Subject
+                            </label>
+                            <input 
+                                type="text" 
+                                name="course_name" 
+                                class="form-control" 
+                                placeholder="e.g. Machine Learning, Physics" 
+                                list="courseSuggestions"
+                            >
+                            <datalist id="courseSuggestions">
+                                {% for c in courses %}
+                                    <option value="{{ c }}"></option>
+                                {% endfor %}
+                            </datalist>
+                        </div>
+                    </div>
+                    <div class="mt-3 text-end">
+                        <button type="submit" id="analyzeSubmitBtn" class="btn btn-primary btn-lg w-100 fw-semibold">
+                            <i class="bi bi-lightning-charge-fill me-1"></i> Analyze Video &amp; Generate Study Kit
+                        </button>
+                    </div>
+                </div>
+            </form>
+            <div class="text-muted small">
+                <i class="bi bi-shield-check text-success me-1"></i> No video downloads required &bull; Transcripts extracted via LangChain &bull; Grounded AI
+            </div>
+        </div>
+    </div>
+
+    <!-- Core Features Grid -->
+    <div class="row g-4 mb-5">
+        <div class="col-12 col-md-6 col-lg-3">
+            <div class="card-modern p-4 h-100">
+                <div class="text-primary fs-2 mb-3"><i class="bi bi-journal-text"></i></div>
+                <h5 class="fw-bold mb-2">Smart Notes</h5>
+                <p class="text-muted small mb-0">
+                    Concise summary, key points, definitions, formulas, examples, and core concepts structured cleanly in JSON.
+                </p>
+            </div>
+        </div>
+        <div class="col-12 col-md-6 col-lg-3">
+            <div class="card-modern p-4 h-100">
+                <div class="text-info fs-2 mb-3"><i class="bi bi-chat-dots-fill"></i></div>
+                <h5 class="fw-bold mb-2">Grounded RAG Chat</h5>
+                <p class="text-muted small mb-0">
+                    Ask questions answered strictly from the video's transcript excerpts indexed in ChromaDB. Zero hallucinations.
+                </p>
+            </div>
+        </div>
+        <div class="col-12 col-md-6 col-lg-3">
+            <div class="card-modern p-4 h-100">
+                <div class="text-warning fs-2 mb-3"><i class="bi bi-card-checklist"></i></div>
+                <h5 class="fw-bold mb-2">Revision Flashcards</h5>
+                <p class="text-muted small mb-0">
+                    Flip cards with high-yield questions &amp; answers generated from video material for rapid active recall.
+                </p>
+            </div>
+        </div>
+        <div class="col-12 col-md-6 col-lg-3">
+            <div class="card-modern p-4 h-100">
+                <div class="text-success fs-2 mb-3"><i class="bi bi-search-heart-fill"></i></div>
+                <h5 class="fw-bold mb-2">Smart Semantic Search</h5>
+                <p class="text-muted small mb-0">
+                    Find where specific topics and definitions are explained across all your saved videos using OpenAI embeddings.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Videos Section -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4 class="fw-bold mb-0"><i class="bi bi-collection-play me-2 text-primary"></i>Your Video Library</h4>
+        <a href="{{ url_for('video.dashboard') }}" class="btn btn-outline-secondary btn-sm">
+            View All in Dashboard <i class="bi bi-arrow-right ms-1"></i>
+        </a>
+    </div>
+
+    {% if recent_videos %}
+    <div class="row g-3">
+        {% for vid in recent_videos %}
+        <div class="col-12 col-md-6 col-lg-4">
+            <div class="card-modern h-100 p-3 d-flex flex-column justify-content-between">
+                <div>
+                    <div class="position-relative mb-2 rounded overflow-hidden" style="padding-bottom: 56.25%; background: #000;">
+                        <img 
+                            src="https://img.youtube.com/vi/{{ vid.youtube_video_id }}/hqdefault.jpg" 
+                            alt="{{ vid.title }}" 
+                            class="position-absolute top-0 start-0 w-100 h-100 object-fit-cover"
+                            loading="lazy"
+                        >
+                        <span class="position-absolute bottom-0 end-0 m-2 badge bg-dark bg-opacity-75">
+                            <i class="bi bi-play-fill"></i> Watch
+                        </span>
+                    </div>
+
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <span class="badge badge-course">{{ vid.course_name }}</span>
+                        {% if vid.completed %}
+                            <span class="badge bg-success-subtle text-success small"><i class="bi bi-check2-circle me-1"></i>Done</span>
+                        {% else %}
+                            <span class="badge bg-secondary-subtle text-secondary small">In Progress</span>
+                        {% endif %}
+                    </div>
+
+                    <h6 class="fw-bold mb-2 text-truncate" title="{{ vid.title }}">{{ vid.title }}</h6>
+                    <p class="text-muted small mb-3 text-truncate-2" style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+                        {{ vid.transcript[:140] }}...
+                    </p>
+                </div>
+
+                <div class="pt-2 border-top d-flex justify-content-between align-items-center gap-1">
+                    <a href="{{ url_for('video.view_video', video_id=vid.id) }}" class="btn btn-sm btn-primary flex-grow-1">
+                        <i class="bi bi-play-circle me-1"></i> Open Hub
+                    </a>
+                    <a href="{{ url_for('notes.view_notes', video_id=vid.id) }}" class="btn btn-sm btn-outline-secondary" title="Notes">
+                        <i class="bi bi-file-text"></i>
+                    </a>
+                    <a href="{{ url_for('flashcards.view_flashcards', video_id=vid.id) }}" class="btn btn-sm btn-outline-secondary" title="Flashcards">
+                        <i class="bi bi-card-checklist"></i>
+                    </a>
+                    <a href="{{ url_for('chatbot.chat_view', video_id=vid.id) }}" class="btn btn-sm btn-outline-secondary" title="Chat">
+                        <i class="bi bi-chat-dots"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="card-modern text-center py-5">
+        <div class="display-6 text-muted mb-3"><i class="bi bi-camera-video"></i></div>
+        <h5>No videos analyzed yet!</h5>
+        <p class="text-muted small mb-3">Paste an educational YouTube URL above to get started.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

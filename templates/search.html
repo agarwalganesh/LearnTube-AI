@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+
+{% block title %}Smart Semantic Search — LearnTube AI{% endblock %}
+
+{% block content %}
+<div class="container py-3">
+    <!-- Header -->
+    <div class="text-center max-w-700 mx-auto mb-4" style="max-width: 680px;">
+        <span class="badge bg-success-subtle text-success border border-success-subtle px-3 py-2 rounded-pill mb-2">
+            <i class="bi bi-cpu-fill me-1"></i> ChromaDB Vector Search
+        </span>
+        <h2 class="fw-bold mb-2">Semantic Smart Search</h2>
+        <p class="text-muted small">
+            Find concepts, formulas, and explanations across your video transcripts using semantic embeddings instead of exact keyword matching.
+        </p>
+    </div>
+
+    <!-- Search Form -->
+    <div class="card-modern p-4 mb-4 mx-auto" style="max-width: 780px;">
+        <form id="searchForm" action="{{ url_for('search.search_page') }}" method="GET">
+            <div class="row g-2">
+                <div class="col-12 col-md-8">
+                    <div class="input-group">
+                        <span class="input-group-text bg-white border-end-0 text-muted">
+                            <i class="bi bi-search"></i>
+                        </span>
+                        <input 
+                            type="text" 
+                            id="searchInput" 
+                            name="q" 
+                            class="form-control border-start-0" 
+                            placeholder="e.g. Find the definition of overfitting..." 
+                            value="{{ query }}"
+                            required 
+                            autofocus
+                        >
+                    </div>
+                </div>
+
+                <div class="col-12 col-md-4">
+                    <select name="video_id" class="form-select">
+                        <option value="">All Videos in Library</option>
+                        {% for v in all_videos %}
+                            <option value="{{ v.id }}" {{ 'selected' if selected_video_id == v.id else '' }}>
+                                {{ v.title }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-between align-items-center mt-3">
+                <div class="d-flex flex-wrap gap-1 align-items-center">
+                    <span class="small text-muted me-1">Try:</span>
+                    <button type="button" class="btn btn-sm btn-light border rounded-pill search-chip px-2 py-0 small" data-query="Where is gradient descent explained?">
+                        gradient descent
+                    </button>
+                    <button type="button" class="btn btn-sm btn-light border rounded-pill search-chip px-2 py-0 small" data-query="Find the definition of overfitting.">
+                        overfitting definition
+                    </button>
+                    <button type="button" class="btn btn-sm btn-light border rounded-pill search-chip px-2 py-0 small" data-query="Find the classification example.">
+                        classification example
+                    </button>
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm px-4">
+                    Search Vectors
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Search Results -->
+    <div class="mx-auto" style="max-width: 780px;">
+        {% if query %}
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="fw-bold mb-0">Search Results for "{{ query }}"</h5>
+                <span class="badge bg-secondary-subtle text-secondary">{{ results|length }} matches found</span>
+            </div>
+
+            {% if results|length > 0 %}
+                <div class="d-flex flex-column gap-3">
+                    {% for item in results %}
+                        <div class="card-modern search-result-card p-3">
+                            <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                                <div>
+                                    <span class="badge badge-course me-1">{{ item.course_name }}</span>
+                                    <a href="{{ url_for('video.view_video', video_id=item.video_id) }}" class="fw-bold text-dark text-decoration-none">
+                                        {{ item.video_title }}
+                                    </a>
+                                </div>
+                                <span class="badge bg-success-subtle text-success small" title="Vector Cosine Similarity">
+                                    {{ (item.similarity * 100)|int }}% Match
+                                </span>
+                            </div>
+
+                            <p class="text-muted small mb-2 bg-light p-2 rounded border" style="line-height: 1.6;">
+                                "{{ item.content }}"
+                            </p>
+
+                            <div class="d-flex justify-content-between align-items-center small">
+                                <span class="text-muted"><i class="bi bi-segmented-nav me-1"></i>Chunk #{{ item.chunk_index + 1 }}</span>
+                                <div class="d-flex gap-2">
+                                    <a href="{{ url_for('chatbot.chat_view', video_id=item.video_id) }}" class="text-decoration-none">
+                                        <i class="bi bi-chat-dots me-1"></i> Discuss in Chat
+                                    </a>
+                                    <a href="{{ item.source }}" target="_blank" rel="noopener noreferrer" class="text-decoration-none text-danger">
+                                        <i class="bi bi-youtube me-1"></i> Watch on YouTube
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="card-modern text-center py-5">
+                    <div class="display-6 text-muted mb-2"><i class="bi bi-search"></i></div>
+                    <h5>No semantic matches found</h5>
+                    <p class="text-muted small mb-0">
+                        Try rephrasing your search query or verify your videos are indexed.
+                    </p>
+                </div>
+            {% endif %}
+        {% else %}
+            <!-- Initial Empty Search State -->
+            <div class="card-modern text-center py-5">
+                <div class="display-6 text-primary mb-3"><i class="bi bi-lightbulb"></i></div>
+                <h5>Semantic Search Across All Videos</h5>
+                <p class="text-muted small mb-0" style="max-width: 480px; margin: 0 auto;">
+                    Enter a natural language question or topic. OpenAI embeddings match the concepts even if the exact keywords don't match.
+                </p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/search.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block title %}AI Chat: {{ video.title }} — LearnTube AI{% endblock %}
+
+{% block content %}
+<div class="container-fluid container-xl py-3">
+    <!-- Breadcrumb -->
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb small">
+            <li class="breadcrumb-item"><a href="{{ url_for('video.index') }}" class="text-decoration-none">Home</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('video.view_video', video_id=video.id) }}" class="text-decoration-none">{{ video.title }}</a></li>
+            <li class="breadcrumb-item active" aria-current="page">AI Video Chat</li>
+        </ol>
+    </nav>
+
+    <div class="row g-4">
+        <!-- Left Column: Video Reference & Notes Preview -->
+        <div class="col-12 col-lg-5">
+            <div class="card-modern p-3 mb-3">
+                <div class="video-player-wrapper mb-3">
+                    <iframe 
+                        src="https://www.youtube-nocookie.com/embed/{{ video.youtube_video_id }}" 
+                        title="{{ video.title }}" 
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                        allowfullscreen>
+                    </iframe>
+                </div>
+                <h6 class="fw-bold mb-1">{{ video.title }}</h6>
+                <div class="d-flex align-items-center gap-2 mb-2">
+                    <span class="badge badge-course small">{{ video.course_name }}</span>
+                    <a href="{{ url_for('notes.view_notes', video_id=video.id) }}" class="small text-decoration-none ms-auto">
+                        <i class="bi bi-journal-text me-1"></i> View Full Notes
+                    </a>
+                </div>
+            </div>
+
+            <!-- Suggested Student Questions -->
+            <div class="card-modern p-3">
+                <h6 class="fw-bold text-muted small mb-2"><i class="bi bi-lightbulb me-1 text-warning"></i> Quick Questions</h6>
+                <div class="d-flex flex-column gap-2">
+                    <button type="button" class="btn btn-outline-secondary btn-sm text-start preset-query-btn" data-query="Explain the core concept taught in this video simply.">
+                        &bull; Explain the core concept taught in this video simply.
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm text-start preset-query-btn" data-query="What examples did the instructor give?">
+                        &bull; What examples did the instructor give?
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm text-start preset-query-btn" data-query="What are the important formulas or definitions?">
+                        &bull; What are the important formulas or definitions?
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm text-start preset-query-btn" data-query="Summarize this in exam-oriented points.">
+                        &bull; Summarize this in exam-oriented points.
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column: RAG AI Assistant Chat Window -->
+        <div class="col-12 col-lg-7">
+            <div class="chat-window">
+                <!-- Chat Header -->
+                <div class="p-3 border-bottom bg-light d-flex justify-content-between align-items-center">
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="bg-primary text-white rounded-circle p-2 d-flex align-items-center justify-content-center" style="width: 36px; height: 36px;">
+                            <i class="bi bi-robot"></i>
+                        </div>
+                        <div>
+                            <h6 class="fw-bold mb-0">Video Study Assistant</h6>
+                            <small class="text-muted" style="font-size: 0.75rem;">
+                                <i class="bi bi-shield-check text-success me-1"></i> Grounded in Video Transcript (RAG + ChromaDB)
+                            </small>
+                        </div>
+                    </div>
+                    <button id="clearChatBtn" class="btn btn-outline-secondary btn-sm" title="Clear Chat History">
+                        <i class="bi bi-arrow-counterclockwise me-1"></i> Clear
+                    </button>
+                </div>
+
+                <!-- Chat Message Stream -->
+                <div id="chatMessages" class="chat-messages">
+                    <div class="chat-bubble chat-bubble-assistant">
+                        Hello! I am your AI study tutor for this video. Ask me anything about the content, definitions, formulas, or examples explained in the video!
+                    </div>
+
+                    {% for msg in history %}
+                        <div class="chat-bubble {{ 'chat-bubble-user' if msg.role == 'user' else 'chat-bubble-assistant' }}">
+                            {{ msg.message }}
+                        </div>
+                    {% endfor %}
+                </div>
+
+                <!-- Chat Input Form -->
+                <div class="p-3 border-top bg-white">
+                    <form id="chatForm" data-video-id="{{ video.id }}" class="d-flex gap-2">
+                        <input 
+                            type="text" 
+                            id="questionInput" 
+                            class="form-control" 
+                            placeholder="Ask a question about this video..." 
+                            required 
+                            autocomplete="off"
+                        >
+                        <button type="submit" id="sendBtn" class="btn btn-primary px-3">
+                            <i class="bi bi-send-fill"></i>
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% block title %}Revision Flashcards: {{ video.title }} — LearnTube AI{% endblock %}
+
+{% block content %}
+<div class="container py-3">
+    <!-- Breadcrumb -->
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb small">
+            <li class="breadcrumb-item"><a href="{{ url_for('video.index') }}" class="text-decoration-none">Home</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('video.view_video', video_id=video.id) }}" class="text-decoration-none">{{ video.title }}</a></li>
+            <li class="breadcrumb-item active" aria-current="page">Flashcards</li>
+        </ol>
+    </nav>
+
+    <!-- Header & Action Row -->
+    <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-2 mb-4">
+        <div>
+            <div class="d-flex align-items-center gap-2 mb-1">
+                <span class="badge badge-course">{{ video.course_name }}</span>
+                <span class="badge bg-warning-subtle text-warning">Active Recall Revision</span>
+            </div>
+            <h2 class="fw-bold mb-0">{{ video.title }}</h2>
+        </div>
+
+        <form action="{{ url_for('flashcards.generate_flashcards', video_id=video.id) }}" method="POST">
+            <button type="submit" class="btn btn-primary btn-sm">
+                <i class="bi bi-arrow-repeat me-1"></i> {{ 'Regenerate Cards' if flashcards|length > 0 else 'Generate Flashcards' }}
+            </button>
+        </form>
+    </div>
+
+    {% if flashcards|length == 0 %}
+        <!-- Empty State -->
+        <div class="card-modern text-center py-5">
+            <div class="display-5 text-warning mb-3"><i class="bi bi-card-heading"></i></div>
+            <h4>No Flashcards Created Yet</h4>
+            <p class="text-muted small mb-4" style="max-width: 500px; margin: 0 auto;">
+                Create concise flashcards covering key definitions, concepts, and formulas from this video for active revision.
+            </p>
+            {% if openai_configured %}
+                <form action="{{ url_for('flashcards.generate_flashcards', video_id=video.id) }}" method="POST">
+                    <button type="submit" class="btn btn-warning text-dark fw-semibold">
+                        <i class="bi bi-stars me-1"></i> Generate AI Flashcards
+                    </button>
+                </form>
+            {% else %}
+                <button type="button" class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#apiKeyModal">
+                    <i class="bi bi-key-fill me-1"></i> Set OpenAI API Key to Generate
+                </button>
+            {% endif %}
+        </div>
+    {% else %}
+        <!-- Interactive Flashcards Deck Container -->
+        <div class="mx-auto" style="max-width: 680px;">
+            <!-- Progress & Counter -->
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span id="cardCounter" class="badge bg-secondary-subtle text-secondary fw-semibold">
+                    Card 1 of {{ flashcards|length }}
+                </span>
+                <small class="text-muted">
+                    <i class="bi bi-keyboard me-1"></i> Use &larr; &rarr; arrows to navigate, Space to flip
+                </small>
+            </div>
+
+            <div class="progress mb-4" style="height: 6px;">
+                <div id="cardProgressBar" class="progress-bar bg-warning" role="progressbar" style="width: 10%;"></div>
+            </div>
+
+            <!-- 3D Flippable Flashcard -->
+            <div class="flashcard-container mb-4">
+                <div id="flashcard" class="flashcard">
+                    <!-- Front (Question) -->
+                    <div class="flashcard-front">
+                        <span class="badge bg-primary-subtle text-primary mb-3">QUESTION</span>
+                        <h4 id="cardQuestion" class="fw-bold mb-3">Loading question...</h4>
+                        <div class="text-muted small mt-auto">
+                            <i class="bi bi-arrow-repeat me-1"></i> Click card or press Space to reveal answer
+                        </div>
+                    </div>
+
+                    <!-- Back (Answer) -->
+                    <div class="flashcard-back">
+                        <span class="badge bg-light text-primary mb-3">ANSWER</span>
+                        <h5 id="cardAnswer" class="fw-medium mb-3 lead">Loading answer...</h5>
+                        <div class="text-white-50 small mt-auto">
+                            <i class="bi bi-arrow-repeat me-1"></i> Click card to flip back
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Controls (Prev, Flip, Next) -->
+            <div class="d-flex justify-content-center align-items-center gap-3">
+                <button id="prevCardBtn" class="btn btn-outline-secondary px-4">
+                    <i class="bi bi-chevron-left me-1"></i> Previous
+                </button>
+                <button id="flipCardBtn" class="btn btn-warning text-dark px-4 fw-semibold">
+                    <i class="bi bi-arrow-left-right me-1"></i> Flip / Show Answer
+                </button>
+                <button id="nextCardBtn" class="btn btn-primary px-4">
+                    Next <i class="bi bi-chevron-right ms-1"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Hidden JSON data block for client logic -->
+        <script id="flashcardsData" type="application/json">
+            {{ flashcards|tojson|safe }}
+        </script>
+    {% endif %}
+</div>
+{% endblock %}

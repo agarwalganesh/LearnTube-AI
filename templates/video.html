@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block title %}{{ video.title }} — LearnTube AI{% endblock %}
+
+{% block content %}
+<div class="container py-3">
+    <!-- Breadcrumb -->
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb small">
+            <li class="breadcrumb-item"><a href="{{ url_for('video.index') }}" class="text-decoration-none">Home</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('video.dashboard') }}" class="text-decoration-none">Dashboard</a></li>
+            <li class="breadcrumb-item active" aria-current="page">{{ video.title }}</li>
+        </ol>
+    </nav>
+
+    <!-- Video Header & Quick Actions -->
+    <div class="card-modern p-4 mb-4">
+        <div class="row g-4">
+            <!-- Left: Embedded YouTube Video -->
+            <div class="col-12 col-lg-7">
+                <div class="video-player-wrapper">
+                    <iframe 
+                        src="https://www.youtube-nocookie.com/embed/{{ video.youtube_video_id }}" 
+                        title="{{ video.title }}" 
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                        allowfullscreen>
+                    </iframe>
+                </div>
+            </div>
+
+            <!-- Right: Video Information & Learning Actions -->
+            <div class="col-12 col-lg-5 d-flex flex-column justify-content-between">
+                <div>
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <span class="badge badge-course"><i class="bi bi-folder2 me-1"></i>{{ video.course_name }}</span>
+                        <form action="{{ url_for('video.toggle_complete', video_id=video.id) }}" method="POST" class="d-inline">
+                            {% if video.completed %}
+                                <button type="submit" class="btn btn-sm btn-success-subtle text-success border border-success-subtle rounded-pill py-0 px-2">
+                                    <i class="bi bi-check-circle-fill me-1"></i> Completed
+                                </button>
+                            {% else %}
+                                <button type="submit" class="btn btn-sm btn-outline-secondary rounded-pill py-0 px-2">
+                                    <i class="bi bi-circle me-1"></i> Mark as Done
+                                </button>
+                            {% endif %}
+                        </form>
+                    </div>
+
+                    <h4 class="fw-bold mb-3">{{ video.title }}</h4>
+
+                    <div class="text-muted small mb-3">
+                        <p class="mb-1"><i class="bi bi-calendar3 me-2"></i>Added on {{ video.created_at.strftime('%B %d, %Y') if video.created_at else '' }}</p>
+                        <p class="mb-1"><i class="bi bi-link-45deg me-2"></i><a href="{{ video.youtube_url }}" target="_blank" rel="noopener noreferrer" class="text-decoration-none">Watch on YouTube <i class="bi bi-box-arrow-up-right small"></i></a></p>
+                    </div>
+                </div>
+
+                <!-- Primary Action Buttons -->
+                <div class="d-grid gap-2 mt-3">
+                    <a href="{{ url_for('notes.view_notes', video_id=video.id) }}" class="btn btn-primary d-flex align-items-center justify-content-center gap-2 py-2">
+                        <i class="bi bi-journal-text fs-5"></i>
+                        <span class="fw-semibold">Smart Notes</span>
+                        {% if video.notes %}<span class="badge bg-white text-primary ms-auto">Ready</span>{% endif %}
+                    </a>
+
+                    <a href="{{ url_for('flashcards.view_flashcards', video_id=video.id) }}" class="btn btn-outline-primary d-flex align-items-center justify-content-center gap-2 py-2">
+                        <i class="bi bi-card-checklist fs-5"></i>
+                        <span class="fw-semibold">Revision Flashcards</span>
+                        {% if video.flashcards.count() > 0 %}<span class="badge bg-primary text-white ms-auto">{{ video.flashcards.count() }}</span>{% endif %}
+                    </a>
+
+                    <a href="{{ url_for('chatbot.chat_view', video_id=video.id) }}" class="btn btn-outline-info text-dark d-flex align-items-center justify-content-center gap-2 py-2">
+                        <i class="bi bi-chat-dots-fill text-info fs-5"></i>
+                        <span class="fw-semibold">Chat with Video</span>
+                        <span class="badge bg-info-subtle text-info ms-auto">RAG</span>
+                    </a>
+
+                    <a href="{{ url_for('search.search_page', video_id=video.id) }}" class="btn btn-outline-secondary d-flex align-items-center justify-content-center gap-2 py-2">
+                        <i class="bi bi-search fs-6"></i>
+                        <span>Search within this Video</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Transcript Section with Accordion/Expand -->
+    <div class="card-modern p-4 mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="fw-bold mb-0"><i class="bi bi-file-earmark-text me-2 text-primary"></i>Cleaned Transcript</h5>
+            <button class="btn btn-outline-secondary btn-sm" onclick="copyToClipboard('fullTranscriptText', this)">
+                <i class="bi bi-clipboard me-1"></i> Copy Transcript
+            </button>
+        </div>
+        <p class="text-muted small">
+            Extracted using LangChain's <code>YoutubeLoader</code> and cleaned for AI embeddings.
+        </p>
+        
+        <div class="p-3 bg-light rounded border text-muted small" style="max-height: 280px; overflow-y: auto; line-height: 1.7;" id="fullTranscriptText">
+            {{ video.transcript }}
+        </div>
+    </div>
+</div>
+{% endblock %}

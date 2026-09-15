@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+
+{% block title %}Smart Notes: {{ video.title }} — LearnTube AI{% endblock %}
+
+{% block content %}
+<div class="container py-3">
+    <!-- Breadcrumb & Header -->
+    <nav aria-label="breadcrumb" class="mb-3">
+        <ol class="breadcrumb small">
+            <li class="breadcrumb-item"><a href="{{ url_for('video.index') }}" class="text-decoration-none">Home</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('video.view_video', video_id=video.id) }}" class="text-decoration-none">{{ video.title }}</a></li>
+            <li class="breadcrumb-item active" aria-current="page">Smart Notes</li>
+        </ol>
+    </nav>
+
+    <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-2 mb-4">
+        <div>
+            <div class="d-flex align-items-center gap-2 mb-1">
+                <span class="badge badge-course">{{ video.course_name }}</span>
+                <span class="badge bg-primary-subtle text-primary">Structured AI Notes</span>
+            </div>
+            <h2 class="fw-bold mb-0">{{ video.title }}</h2>
+        </div>
+        
+        <div class="d-flex gap-2">
+            {% if notes %}
+                <button class="btn btn-outline-secondary btn-sm" onclick="copyToClipboard('notesContainer', this)">
+                    <i class="bi bi-clipboard me-1"></i> Copy All Notes
+                </button>
+            {% endif %}
+            
+            <form action="{{ url_for('notes.generate_notes', video_id=video.id) }}" method="POST">
+                <button type="submit" class="btn btn-primary btn-sm">
+                    <i class="bi bi-arrow-repeat me-1"></i> {{ 'Regenerate Notes' if notes else 'Generate Smart Notes' }}
+                </button>
+            </form>
+        </div>
+    </div>
+
+    {% if not notes %}
+        <!-- No Notes Generated State -->
+        <div class="card-modern text-center py-5">
+            <div class="display-5 text-primary mb-3"><i class="bi bi-journal-plus"></i></div>
+            <h4>No Smart Notes Generated Yet</h4>
+            <p class="text-muted small mb-4" style="max-width: 500px; margin: 0 auto;">
+                Extract structured summary, definitions, formulas, instructor examples, and key takeaways using OpenAI LLM.
+            </p>
+            {% if openai_configured %}
+                <form action="{{ url_for('notes.generate_notes', video_id=video.id) }}" method="POST">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-stars me-1"></i> Generate Smart Notes Now
+                    </button>
+                </form>
+            {% else %}
+                <button type="button" class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#apiKeyModal">
+                    <i class="bi bi-key-fill me-1"></i> Configure OpenAI Key in .env to Generate
+                </button>
+            {% endif %}
+        </div>
+    {% else %}
+        <!-- Notes Render Container -->
+        <div id="notesContainer">
+            <!-- 1. Video Summary -->
+            <div class="notes-section-card">
+                <h5 class="fw-bold text-primary mb-3">
+                    <i class="bi bi-card-text me-2"></i>Summary
+                </h5>
+                <p class="lead fs-6 text-muted mb-0" style="line-height: 1.7;">
+                    {{ notes.summary }}
+                </p>
+            </div>
+
+            <!-- 2. Key Points -->
+            <div class="notes-section-card">
+                <h5 class="fw-bold text-primary mb-3">
+                    <i class="bi bi-check2-square me-2"></i>Key Points
+                </h5>
+                {% if notes.key_points and notes.key_points|length > 0 %}
+                    <ul class="list-group list-group-flush">
+                        {% for point in notes.key_points %}
+                            <li class="list-group-item px-0 py-2 border-0 d-flex align-items-start gap-2">
+                                <i class="bi bi-arrow-right-circle text-primary mt-1"></i>
+                                <span>{{ point }}</span>
+                            </li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <p class="text-muted small mb-0">No specific key points identified.</p>
+                {% endif %}
+            </div>
+
+            <!-- 3. Important Definitions -->
+            <div class="notes-section-card">
+                <h5 class="fw-bold text-primary mb-3">
+                    <i class="bi bi-book me-2"></i>Definitions &amp; Terminology
+                </h5>
+                {% if notes.definitions and notes.definitions|length > 0 %}
+                    <div class="row g-3">
+                        {% for item in notes.definitions %}
+                            <div class="col-12 col-md-6">
+                                <div class="p-3 bg-light rounded border h-100">
+                                    <h6 class="fw-bold text-dark mb-1">
+                                        {{ item.term if item is mapping else item }}
+                                    </h6>
+                                    {% if item is mapping and item.definition %}
+                                        <p class="text-muted small mb-0">{{ item.definition }}</p>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-muted small mb-0">No formal definitions explicitly defined in this video.</p>
+                {% endif %}
+            </div>
+
+            <!-- 4. Formulas -->
+            <div class="notes-section-card">
+                <h5 class="fw-bold text-primary mb-3">
+                    <i class="bi bi-calculator me-2"></i>Formulas &amp; Mathematical Equations
+                </h5>
+                {% if notes.formulas and notes.formulas|length > 0 %}
+                    <div class="d-flex flex-column gap-2">
+                        {% for formula in notes.formulas %}
+                            <div class="formula-card">
+                                <code>{{ formula }}</code>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-muted small mb-0">No mathematical formulas present in this video.</p>
+                {% endif %}
+            </div>
+
+            <!-- 5. Instructor Examples -->
+            <div class="notes-section-card">
+                <h5 class="fw-bold text-primary mb-3">
+                    <i class="bi bi-lightbulb me-2"></i>Instructor Examples &amp; Case Studies
+                </h5>
+                {% if notes.examples and notes.examples|length > 0 %}
+                    <div class="d-flex flex-column gap-2">
+                        {% for ex in notes.examples %}
+                            <div class="p-3 border-start border-4 border-info bg-light rounded">
+                                <i class="bi bi-chat-left-quote-fill text-info me-2"></i>
+                                <span>{{ ex }}</span>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-muted small mb-0">No specific standalone examples highlighted.</p>
+                {% endif %}
+            </div>
+
+            <!-- 6. Important Concepts -->
+            <div class="notes-section-card">
+                <h5 class="fw-bold text-primary mb-3">
+                    <i class="bi bi-star-fill text-warning me-2"></i>Core Concepts for Exam Prep
+                </h5>
+                {% if notes.important_concepts and notes.important_concepts|length > 0 %}
+                    <div class="d-flex flex-wrap gap-2">
+                        {% for concept in notes.important_concepts %}
+                            <span class="badge bg-light text-dark border p-2 px-3 fs-6 fw-normal">
+                                <i class="bi bi-dot text-primary"></i> {{ concept }}
+                            </span>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-muted small mb-0">All core concepts are covered in the summary above.</p>
+                {% endif %}
+            </div>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
