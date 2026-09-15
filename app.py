@@ -8,6 +8,11 @@ def create_app(config_class=Config):
     """Application factory for the YouTube Learning Assistant."""
     app = Flask(__name__)
     app.config.from_object(config_class)
+    
+    # Ensure secret_key is never empty for session/flash
+    secret = app.config.get('SECRET_KEY') or 'dev-secret-key-youtube-learning-assistant-2026-safe'
+    app.config['SECRET_KEY'] = secret
+    app.secret_key = secret
 
     # Initialize SQLAlchemy
     db.init_app(app)
@@ -44,8 +49,7 @@ def create_app(config_class=Config):
     @app.errorhandler(500)
     def internal_error(e):
         db.session.rollback()
-        import traceback
-        return render_template('base.html', error_title="500 - Server Error", error_msg=f"{str(e)} : {traceback.format_exc()}"), 500
+        return render_template('base.html', error_title="500 - Server Error", error_msg="An unexpected error occurred. Please try again."), 500
 
     # Ensure database tables exist
     with app.app_context():
