@@ -19,6 +19,16 @@ def create_app(config_class=Config):
     app.register_blueprint(flashcard_bp)
     app.register_blueprint(search_bp)
 
+    # Ensure database is ready on every worker cold start
+    @app.before_request
+    def ensure_db_ready():
+        if not getattr(app, '_db_ready', False):
+            try:
+                db.create_all()
+                app._db_ready = True
+            except Exception:
+                pass
+
     # Context processors for templates
     @app.context_processor
     def inject_globals():

@@ -17,6 +17,11 @@ class Config:
     if IS_VERCEL:
         SQLALCHEMY_DATABASE_URI = "sqlite:////tmp/youtube_learning.db"
         CHROMA_PERSIST_DIR = "/tmp/chroma_db"
+        os.environ['XDG_CACHE_HOME'] = '/tmp/cache'
+        os.environ['HF_HOME'] = '/tmp/cache/huggingface'
+        os.environ['CHROMA_CACHE_DIR'] = '/tmp/cache/chroma'
+        os.environ['ONNX_CACHE_DIR'] = '/tmp/cache/onnx'
+        os.environ['NUMBA_CACHE_DIR'] = '/tmp/cache/numba'
     else:
         _db_path = (BASE_DIR / "youtube_learning.db").as_posix()
         SQLALCHEMY_DATABASE_URI = f"sqlite:///{_db_path}"

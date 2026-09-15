@@ -50,50 +50,53 @@ class ChromaService:
         """
         Split transcript into chunks, compute embeddings, and store in ChromaDB with metadata.
         """
-        if not transcript or not transcript.strip():
-            return {'success': False, 'chunk_count': 0, 'error': 'Transcript is empty'}
-            
-        if not Config.is_openai_configured():
-            return {
-                'success': False, 
-                'chunk_count': 0, 
-                'error': 'OpenAI API key is not configured. Chunks could not be embedded.'
-            }
-
-        # First remove any existing chunks for this video to prevent duplicates
-        cls.delete_video_chunks(video_id)
-
-        # Chunk the transcript
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=900,
-            chunk_overlap=120,
-            separators=["\n\n", "\n", ". ", " ", ""]
-        )
-        chunks = text_splitter.split_text(transcript)
-        
-        if not chunks:
-            return {'success': False, 'chunk_count': 0, 'error': 'No chunks generated'}
-
-        # Prepare metadata and document IDs
-        documents = []
-        metadatas = []
-        ids = []
-
-        for idx, chunk in enumerate(chunks):
-            chunk_id = f"vid_{video_id}_chunk_{idx}"
-            ids.append(chunk_id)
-            documents.append(chunk)
-            metadatas.append({
-                "video_id": int(video_id),
-                "youtube_video_id": str(youtube_video_id),
-                "video_title": str(title),
-                "course_name": str(course_name),
-                "chunk_index": int(idx),
-                "source": f"https://www.youtube.com/watch?v={youtube_video_id}"
-            })
-
         try:
-            # Generate embeddings via OpenAI
+            if not transcript or not transcript.strip():
+                return {'success': False, 'chunk_count': 0, 'error': 'Transcript is empty'}
+                
+            if not Config.is_ai_configured():
+                return {
+                    'success': False, 
+                    'chunk_count': 0, 
+                    'error': 'AI API key is not configured.'
+                }
+
+            # First remove any existing chunks for this video to prevent duplicates
+            try:
+                cls.delete_video_chunks(video_id)
+            except Exception:
+                pass
+
+            # Chunk the transcript
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=900,
+                chunk_overlap=120,
+                separators=["\n\n", "\n", ". ", " ", ""]
+            )
+            chunks = text_splitter.split_text(transcript)
+            
+            if not chunks:
+                return {'success': False, 'chunk_count': 0, 'error': 'No chunks generated'}
+
+            # Prepare metadata and document IDs
+            documents = []
+            metadatas = []
+            ids = []
+
+            for idx, chunk in enumerate(chunks):
+                chunk_id = f"vid_{video_id}_chunk_{idx}"
+                ids.append(chunk_id)
+                documents.append(chunk)
+                metadatas.append({
+                    "video_id": int(video_id),
+                    "youtube_video_id": str(youtube_video_id),
+                    "video_title": str(title),
+                    "course_name": str(course_name),
+                    "chunk_index": int(idx),
+                    "source": f"https://www.youtube.com/watch?v={youtube_video_id}"
+                })
+
+            # Generate embeddings
             embeddings = EmbeddingService.embed_documents(documents)
             
             # Store in ChromaDB
@@ -113,7 +116,7 @@ class ChromaService:
         except Exception as e:
             return {
                 'success': False,
-                'chunk_count': len(chunks),
+                'chunk_count': 0,
                 'error': f"ChromaDB indexing error: {str(e)}"
             }
 

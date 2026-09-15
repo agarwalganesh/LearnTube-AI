@@ -25,81 +25,92 @@ def index():
 @video_bp.route('/video/analyze', methods=['POST'])
 def analyze_video():
     """Process a YouTube URL, extract transcript, index into ChromaDB, and save to SQLite."""
-    youtube_url = request.form.get('youtube_url', '').strip()
-    course_name = request.form.get('course_name', '').strip() or 'General'
+    try:
+        youtube_url = request.form.get('youtube_url', '').strip()
+        course_name = request.form.get('course_name', '').strip() or 'General'
 
-    if not youtube_url:
-        flash('Please enter a valid YouTube video URL.', 'danger')
-        return redirect(url_for('video.index'))
+        if not youtube_url:
+            flash('Please enter a valid YouTube video URL.', 'danger')
+            return redirect(url_for('video.index'))
 
-    # Validate URL
-    is_valid, video_id, val_err = YouTubeService.validate_url(youtube_url)
-    if not is_valid:
-        flash(val_err, 'danger')
-        return redirect(url_for('video.index'))
+        # Validate URL
+        is_valid, video_id, val_err = YouTubeService.validate_url(youtube_url)
+        if not is_valid:
+            flash(val_err, 'danger')
+            return redirect(url_for('video.index'))
 
-    # Check if video already exists in database
-    existing_video = Video.query.filter_by(youtube_video_id=video_id).first()
-    if existing_video:
-        flash(f'"{existing_video.title}" is already in your learning library!', 'info')
-        return redirect(url_for('video.view_video', video_id=existing_video.id))
+        # Check if video already exists in database
+        existing_video = Video.query.filter_by(youtube_video_id=video_id).first()
+        if existing_video:
+            flash(f'"{existing_video.title}" is already in your learning library!', 'info')
+            return redirect(url_for('video.view_video', video_id=existing_video.id))
 
-    # Extract Transcript using LangChain YoutubeLoader
-    extraction_result = TranscriptService.extract_transcript(youtube_url)
-    if not extraction_result['success']:
-        flash(extraction_result['error'], 'danger')
-        return redirect(url_for('video.index'))
+        # Extract Transcript using LangChain YoutubeLoader
+        extraction_result = TranscriptService.extract_transcript(youtube_url)
+        if not extraction_result['success']:
+            flash(extraction_result['error'], 'danger')
+            return redirect(url_for('video.index'))
 
-    # Save to SQLite Database
-    normalized_url = YouTubeService.normalize_url(video_id)
-    new_video = Video(
-        youtube_url=normalized_url,
-        youtube_video_id=video_id,
-        title=extraction_result['title'],
-        transcript=extraction_result['transcript'],
-        course_name=course_name,
-        completed=False
-    )
-    db.session.add(new_video)
-    db.session.commit()
-
-    # Index into ChromaDB if OpenAI key is configured
-    if Config.is_openai_configured():
-        chroma_res = ChromaService.index_video_transcript(
-            video_id=new_video.id,
-            youtube_video_id=new_video.youtube_video_id,
-            title=new_video.title,
-            course_name=new_video.course_name,
-            transcript=new_video.transcript
+        # Save to SQLite Database
+        normalized_url = YouTubeService.normalize_url(video_id)
+        new_video = Video(
+            youtube_url=normalized_url,
+            youtube_video_id=video_id,
+            title=extraction_result['title'],
+            transcript=extraction_result['transcript'],
+            course_name=course_name,
+            completed=False
         )
-        if chroma_res['success']:
-            flash(f'Successfully analyzed and indexed {chroma_res["chunk_count"]} chunks in vector store!', 'success')
-        else:
-            flash(f'Video saved, but ChromaDB indexing had an issue: {chroma_res.get("error")}', 'warning')
+        db.session.add(new_video)
+        db.session.commit()
 
-        # Automatically attempt Smart Notes generation
-        try:
-            notes_res = LLMService.generate_smart_notes(new_video.title, new_video.transcript)
-            if notes_res['success']:
-                data = notes_res['data']
-                notes_record = Notes(
+        # Index into ChromaDB if AI provider is configured
+        if Config.is_ai_configured():
+            try:
+                chroma_res = ChromaService.index_video_transcript(
                     video_id=new_video.id,
-                    summary=data['summary'],
-                    key_points=data['key_points'],
-                    definitions=data['definitions'],
-                    formulas=data['formulas'],
-                    examples=data['examples'],
-                    important_concepts=data['important_concepts']
+                    youtube_video_id=new_video.youtube_video_id,
+                    title=new_video.title,
+                    course_name=new_video.course_name,
+                    transcript=new_video.transcript
                 )
-                db.session.add(notes_record)
-                db.session.commit()
-                flash('Smart Notes were automatically generated!', 'success')
-        except Exception:
-            pass
-    else:
-        flash('Video and transcript saved! Set your OPENAI_API_KEY in .env to enable Smart Notes, Flashcards, and RAG Chat.', 'warning')
+                if chroma_res['success']:
+                    flash(f'Successfully analyzed and indexed {chroma_res["chunk_count"]} chunks in vector store!', 'success')
+                else:
+                    flash(f'Video saved, but ChromaDB indexing had an issue: {chroma_res.get("error")}', 'warning')
+            except Exception as ce:
+                flash(f'Video saved, but vector indexing was skipped: {str(ce)}', 'warning')
 
-    return redirect(url_for('video.view_video', video_id=new_video.id))
+            # Automatically attempt Smart Notes generation
+            try:
+                notes_res = LLMService.generate_smart_notes(new_video.title, new_video.transcript)
+                if notes_res['success']:
+                    data = notes_res['data']
+                    notes_record = Notes(
+                        video_id=new_video.id,
+                        summary=data['summary'],
+                        key_points=data['key_points'],
+                        definitions=data['definitions'],
+                        formulas=data['formulas'],
+                        examples=data['examples'],
+                        important_concepts=data['important_concepts']
+                    )
+                    db.session.add(notes_record)
+                    db.session.commit()
+                    flash('Smart Notes were automatically generated!', 'success')
+            except Exception:
+                pass
+        else:
+            flash('Video and transcript saved! Set your GROQ_API_KEY in .env to enable Smart Notes, Flashcards, and RAG Chat.', 'warning')
+
+        return redirect(url_for('video.view_video', video_id=new_video.id))
+
+    except Exception as e:
+        db.session.rollback()
+        import traceback
+        traceback.print_exc()
+        flash(f'Error analyzing video: {str(e)}', 'danger')
+        return redirect(url_for('video.index'))
 
 @video_bp.route('/video/<int:video_id>')
 def view_video(video_id):
