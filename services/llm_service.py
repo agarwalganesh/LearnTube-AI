@@ -1,4 +1,8 @@
+
+
 import json
+import re
+import time
 from typing import Dict, Any, Optional, Tuple
 from openai import OpenAI
 from config import Config
@@ -47,72 +51,104 @@ class LLMService:
         if not client:
             return {'success': False, 'error': 'Failed to initialize AI client.'}
 
-        # Smartly sample transcript if excessively long to respect TPM rate limits
-        if len(transcript) > 20000:
-            part1 = transcript[:7000]
+        # Smartly sample transcript if long to respect TPM rate limits (especially for Hindi/multilingual tokens)
+        if len(transcript) > 8000:
+            part1 = transcript[:3000]
             mid = len(transcript) // 2
-            part2 = transcript[mid-3500:mid+3500]
-            part3 = transcript[-7000:]
+            part2 = transcript[mid-1500:mid+1500]
+            part3 = transcript[-3000:]
             trimmed_transcript = f"{part1}\n\n[...]\n\n{part2}\n\n[...]\n\n{part3}"
         else:
             trimmed_transcript = transcript
 
         system_prompt = (
-            "You are an expert academic tutor and study assistant. Your job is to extract comprehensive, "
-            "clear, and structured study notes strictly from the provided YouTube video transcript.\n\n"
-            "STRICT RULES:\n"
-            "1. Grounding: Rely ONLY on the information present in the video transcript. DO NOT hallucinate, assume, "
-            "or invent details that are not in the video.\n"
-            "2. If a section (like formulas or specific examples) is not discussed or present in the video, "
-            "return an empty list [] for that key.\n"
-            "3. Format your entire output as a valid JSON object matching this schema exactly:\n"
+            "You are an expert academic tutor. Extract structured study notes strictly from the video transcript.\n"
+            "Respond ONLY with a valid JSON object matching this schema:\n"
             "{\n"
-            '  "summary": "Concise overview of the complete video content",\n'
-            '  "key_points": ["Point 1", "Point 2", ...],\n'
-            '  "definitions": [{"term": "Term Name", "definition": "Explanation as taught in video"}, ...],\n'
-            '  "formulas": ["Formula 1", ...],\n'
-            '  "examples": ["Example 1 explained by instructor", ...],\n'
-            '  "important_concepts": ["Concept 1", ...]\n'
+            '  "summary": "Concise overview of the video",\n'
+            '  "key_points": ["Point 1", "Point 2"],\n'
+            '  "definitions": [{"term": "Term", "definition": "Explanation"}],\n'
+            '  "formulas": ["Formula 1"],\n'
+            '  "examples": ["Example 1"],\n'
+            '  "important_concepts": ["Concept 1"]\n'
             "}"
         )
 
         user_prompt = (
             f"Video Title: {title}\n\n"
-            f"Transcript Content:\n{trimmed_transcript}\n\n"
-            "Generate the structured study notes in strict JSON format."
+            f"Transcript:\n{trimmed_transcript}\n\n"
+            "Return the notes as a valid JSON object."
         )
 
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                temperature=0.2,
-                response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ]
-            )
+        def _extract_json(text: str) -> Optional[dict]:
+            if not text:
+                return None
+            cleaned = re.sub(r'^```(?:json)?\s*', '', text.strip(), flags=re.MULTILINE)
+            cleaned = re.sub(r'\s*```$', '', cleaned.strip(), flags=re.MULTILINE)
+            try:
+                return json.loads(cleaned)
+            except Exception:
+                pass
+            match = re.search(r'(\{[\s\S]*\})', cleaned)
+            if match:
+                candidate = match.group(1)
+                try:
+                    return json.loads(candidate)
+                except Exception:
+                    pass
+                fixed = re.sub(r',\s*([\]\}])', r'\1', candidate)
+                try:
+                    return json.loads(fixed)
+                except Exception:
+                    pass
+            return None
 
-            content = response.choices[0].message.content
-            notes_data = json.loads(content)
+        notes_data = None
+        for attempt in range(3):
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    temperature=0.2,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ]
+                )
+                notes_data = _extract_json(response.choices[0].message.content)
+                if notes_data:
+                    break
+            except Exception as e:
+                # If rate limited, sleep briefly and retry
+                if '429' in str(e) or 'rate_limit' in str(e):
+                    time.sleep(1.5)
+                    continue
+                # Check if Groq validator failed but generated the text in 'failed_generation'
+                err_dict = getattr(e, 'body', None) or {}
+                if isinstance(err_dict, dict) and 'error' in err_dict:
+                    failed_gen = err_dict.get('error', {}).get('failed_generation')
+                    if failed_gen:
+                        notes_data = _extract_json(failed_gen)
+                        if notes_data:
+                            break
+                time.sleep(1)
 
-            normalized_notes = {
-                "summary": str(notes_data.get("summary", "")),
-                "key_points": list(notes_data.get("key_points", [])),
-                "definitions": list(notes_data.get("definitions", [])),
-                "formulas": list(notes_data.get("formulas", [])),
-                "examples": list(notes_data.get("examples", [])),
-                "important_concepts": list(notes_data.get("important_concepts", []))
-            }
-
-            return {
-                'success': True,
-                'data': normalized_notes,
-                'error': None
-            }
-
-        except Exception as e:
+        if not notes_data:
             return {
                 'success': False,
-                'error': f"AI API error during note generation: {str(e)}"
+                'error': 'Could not parse structured notes from AI response. Please try again.'
             }
+
+        normalized_notes = {
+            "summary": str(notes_data.get("summary", "")),
+            "key_points": list(notes_data.get("key_points", [])),
+            "definitions": list(notes_data.get("definitions", [])),
+            "formulas": list(notes_data.get("formulas", [])),
+            "examples": list(notes_data.get("examples", [])),
+            "important_concepts": list(notes_data.get("important_concepts", []))
+        }
+
+        return {
+            'success': True,
+            'data': normalized_notes,
+            'error': None
+        }

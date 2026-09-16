@@ -1,4 +1,6 @@
 import json
+import re
+import time
 from typing import List, Dict, Any, Optional, Tuple
 from openai import OpenAI
 from config import Config
@@ -50,11 +52,11 @@ class FlashcardService:
             )
 
         if video.transcript:
-            if len(video.transcript) > 20000:
-                part1 = video.transcript[:7000]
+            if len(video.transcript) > 8000:
+                part1 = video.transcript[:3000]
                 mid = len(video.transcript) // 2
-                part2 = video.transcript[mid-3500:mid+3500]
-                part3 = video.transcript[-7000:]
+                part2 = video.transcript[mid-1500:mid+1500]
+                part3 = video.transcript[-3000:]
                 transcript_excerpt = f"{part1}\n\n[...]\n\n{part2}\n\n[...]\n\n{part3}"
             else:
                 transcript_excerpt = video.transcript
@@ -80,24 +82,56 @@ class FlashcardService:
             f"Generate {count} high-quality flashcards in JSON format."
         )
 
+        def _extract_cards(text: str) -> list:
+            if not text:
+                return []
+            cleaned = re.sub(r'^```(?:json)?\s*', '', text.strip(), flags=re.MULTILINE)
+            cleaned = re.sub(r'\s*```$', '', cleaned.strip(), flags=re.MULTILINE)
+            try:
+                parsed = json.loads(cleaned)
+                if isinstance(parsed, dict):
+                    return parsed.get("flashcards", [])
+                elif isinstance(parsed, list):
+                    return parsed
+            except Exception:
+                pass
+            match = re.search(r'(\{[\s\S]*\})', cleaned)
+            if match:
+                try:
+                    parsed = json.loads(match.group(1))
+                    if isinstance(parsed, dict):
+                        return parsed.get("flashcards", [])
+                except Exception:
+                    pass
+            return []
+
+        cards_data = []
+        last_err = None
+        for attempt in range(4):
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    temperature=0.3,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ]
+                )
+                cards_data = _extract_cards(response.choices[0].message.content)
+                if cards_data:
+                    break
+            except Exception as e:
+                last_err = e
+                if '429' in str(e) or 'rate_limit' in str(e):
+                    time.sleep(3)
+                    continue
+                time.sleep(1)
+
+        if not cards_data:
+            err_msg = str(last_err) if last_err else 'No flashcards were generated.'
+            return {'success': False, 'flashcards': [], 'error': err_msg}
+
         try:
-            response = client.chat.completions.create(
-                model=model,
-                temperature=0.3,
-                response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ]
-            )
-
-            raw_content = response.choices[0].message.content
-            parsed = json.loads(raw_content)
-            cards_data = parsed.get("flashcards", [])
-
-            if not cards_data:
-                return {'success': False, 'flashcards': [], 'error': 'No flashcards were generated.'}
-
             Flashcard.query.filter_by(video_id=video_id).delete()
 
             saved_cards = []
