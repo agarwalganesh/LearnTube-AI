@@ -7,7 +7,7 @@ class YouTubeService:
     """Service for validating YouTube URLs and extracting video metadata."""
     
     YOUTUBE_VIDEO_ID_REGEX = re.compile(
-        r'(?:v=|\/embed\/|\/1080p\/|\/shorts\/|youtu\.be\/|\/v\/|\/e\/|watch\?v=|watch\?.+&v=)([\w-]{11})'
+        r'(?:v=|\/embed\/|\/1080p\/|\/shorts\/|\/live\/|youtu\.be\/|\/v\/|\/e\/|watch\?v=|watch\?.+&v=)([\w-]{11})'
     )
     
     @classmethod
@@ -25,13 +25,25 @@ class YouTubeService:
         if match:
             return match.group(1)
             
-        # Parse query params if standard parse fails
+        # Parse query params or path if standard regex misses
         try:
             parsed_url = urllib.parse.urlparse(url)
-            if 'youtube.com' in parsed_url.hostname or 'youtu.be' in parsed_url.hostname:
+            hostname = (parsed_url.hostname or '').lower()
+            if any(h in hostname for h in ['youtube.com', 'youtu.be', 'youtube-nocookie.com']):
+                # Check 'v' query param
                 query_params = urllib.parse.parse_qs(parsed_url.query)
                 if 'v' in query_params:
                     return query_params['v'][0]
+                
+                # Check path segments (/live/XYZ, /shorts/XYZ, /embed/XYZ)
+                parts = [p for p in parsed_url.path.strip('/').split('/') if p]
+                for i, part in enumerate(parts):
+                    if part in ['live', 'shorts', 'embed', 'v', 'e'] and i + 1 < len(parts):
+                        cand = parts[i + 1]
+                        if re.fullmatch(r'[\w-]{11}', cand):
+                            return cand
+                    if 'youtu.be' in hostname and re.fullmatch(r'[\w-]{11}', part):
+                        return part
         except Exception:
             pass
             
