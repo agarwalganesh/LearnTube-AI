@@ -33,13 +33,13 @@ class Config:
     LLM_PROVIDER = os.getenv('LLM_PROVIDER', 'groq').lower()
     
     # Groq (100% Free)
-    GROQ_API_KEY = os.getenv('GROQ_API_KEY', '')
-    GROQ_BASE_URL = os.getenv('GROQ_BASE_URL', 'https://api.groq.com/openai/v1')
-    GROQ_MODEL = os.getenv('GROQ_MODEL', 'groq/compound')
+    GROQ_API_KEY = (os.getenv('GROQ_API_KEY') or '').strip()
+    GROQ_BASE_URL = (os.getenv('GROQ_BASE_URL') or 'https://api.groq.com/openai/v1').strip()
+    GROQ_MODEL = (os.getenv('GROQ_MODEL') or 'groq/compound').strip()
     
     # OpenAI
-    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
-    OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
+    OPENAI_API_KEY = (os.getenv('OPENAI_API_KEY') or '').strip()
+    OPENAI_MODEL = (os.getenv('OPENAI_MODEL') or 'gpt-4o-mini').strip()
     
     # Embeddings ('local' for free ONNX or 'openai')
     EMBEDDING_PROVIDER = os.getenv('EMBEDDING_PROVIDER', 'local').lower()

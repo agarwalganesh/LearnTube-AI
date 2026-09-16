@@ -1,5 +1,3 @@
-
-
 import json
 import re
 import time
@@ -20,13 +18,15 @@ class LLMService:
         if Config.GROQ_API_KEY and not Config.GROQ_API_KEY.startswith('your_'):
             client = OpenAI(
                 api_key=Config.GROQ_API_KEY,
-                base_url=Config.GROQ_BASE_URL
+                base_url=Config.GROQ_BASE_URL or 'https://api.groq.com/openai/v1'
             )
-            return client, Config.GROQ_MODEL
+            model = (Config.GROQ_MODEL or 'groq/compound').strip() or 'groq/compound'
+            return client, model
 
         # 2. Fallback to OpenAI
         if Config.OPENAI_API_KEY and not Config.OPENAI_API_KEY.startswith('your_'):
-            return OpenAI(api_key=Config.OPENAI_API_KEY), Config.OPENAI_MODEL
+            model = (Config.OPENAI_MODEL or 'gpt-4o-mini').strip() or 'gpt-4o-mini'
+            return OpenAI(api_key=Config.OPENAI_API_KEY), model
 
         return None, ""
 

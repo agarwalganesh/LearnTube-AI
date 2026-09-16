@@ -1,3 +1,4 @@
+import time
 from typing import List, Dict, Any, Optional, Tuple
 from openai import OpenAI
 from config import Config
@@ -11,13 +12,15 @@ class RAGService:
     def get_client(cls) -> Tuple[Optional[OpenAI], str]:
         """Obtain AI client and model name (Groq or OpenAI)."""
         if Config.GROQ_API_KEY and not Config.GROQ_API_KEY.startswith('your_'):
+            model = (Config.GROQ_MODEL or 'groq/compound').strip() or 'groq/compound'
             return OpenAI(
                 api_key=Config.GROQ_API_KEY,
-                base_url=Config.GROQ_BASE_URL
-            ), Config.GROQ_MODEL
+                base_url=Config.GROQ_BASE_URL or 'https://api.groq.com/openai/v1'
+            ), model
 
         if Config.OPENAI_API_KEY and not Config.OPENAI_API_KEY.startswith('your_'):
-            return OpenAI(api_key=Config.OPENAI_API_KEY), Config.OPENAI_MODEL
+            model = (Config.OPENAI_MODEL or 'gpt-4o-mini').strip() or 'gpt-4o-mini'
+            return OpenAI(api_key=Config.OPENAI_API_KEY), model
 
         return None, ""
 
@@ -90,29 +93,42 @@ class RAGService:
         )
         messages.append({"role": "user", "content": user_content})
 
+        answer = ""
+        last_error = None
+        for attempt in range(3):
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=0.2
+                )
+                answer = response.choices[0].message.content.strip()
+                if answer:
+                    break
+            except Exception as e:
+                last_error = e
+                if '429' in str(e) or 'rate_limit' in str(e):
+                    time.sleep(2)
+                    continue
+                time.sleep(1)
+
+        if not answer:
+            return {
+                'success': False,
+                'answer': f"AI processing error: {str(last_error) if last_error else 'No response from model'}"
+            }
+
         try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0.2
-            )
-
-            answer = response.choices[0].message.content.strip()
-
             user_msg = ChatMessage(video_id=video_id, role='user', message=question)
             ai_msg = ChatMessage(video_id=video_id, role='assistant', message=answer)
             db.session.add(user_msg)
             db.session.add(ai_msg)
             db.session.commit()
+        except Exception:
+            db.session.rollback()
 
-            return {
-                'success': True,
-                'answer': answer,
-                'sources': [c['content'][:150] + '...' for c in retrieved_chunks]
-            }
-
-        except Exception as e:
-            return {
-                'success': False,
-                'answer': f"AI processing error: {str(e)}"
-            }
+        return {
+            'success': True,
+            'answer': answer,
+            'sources': [c['content'][:150] + '...' for c in retrieved_chunks]
+        }
