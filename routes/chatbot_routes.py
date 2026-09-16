@@ -8,13 +8,16 @@ chatbot_bp = Blueprint('chatbot', __name__)
 @chatbot_bp.route('/video/<int:video_id>/chat')
 def chat_view(video_id):
     """Render the AI Video Chatbot page."""
-    video = db.get_or_404(Video, video_id)
+    video = db.session.get(Video, video_id)
+    if not video:
+        flash(f'Video #{video_id} was not found. Please select a video from your library.', 'warning')
+        return redirect(url_for('video.index'))
     history = ChatMessage.query.filter_by(video_id=video_id).order_by(ChatMessage.created_at.asc()).all()
     return render_template(
         'chat.html',
         video=video,
         history=history,
-        openai_configured=Config.is_openai_configured()
+        openai_configured=Config.is_ai_configured()
     )
 
 @chatbot_bp.route('/api/chat/<int:video_id>', methods=['POST'])

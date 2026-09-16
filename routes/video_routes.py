@@ -115,8 +115,11 @@ def analyze_video():
 @video_bp.route('/video/<int:video_id>')
 def view_video(video_id):
     """View video hub with embedded player, tabs for Notes, Flashcards, Chat, and full transcript."""
-    video = db.get_or_404(Video, video_id)
-    return render_template('video.html', video=video, openai_configured=Config.is_openai_configured())
+    video = db.session.get(Video, video_id)
+    if not video:
+        flash(f'Video #{video_id} was not found. Please select a video from your library.', 'warning')
+        return redirect(url_for('video.index'))
+    return render_template('video.html', video=video, openai_configured=Config.is_ai_configured())
 
 @video_bp.route('/video/<int:video_id>/toggle-complete', methods=['POST'])
 def toggle_complete(video_id):

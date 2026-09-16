@@ -8,22 +8,31 @@ notes_bp = Blueprint('notes', __name__)
 @notes_bp.route('/video/<int:video_id>/notes')
 def view_notes(video_id):
     """Render smart notes page for the video."""
-    video = db.get_or_404(Video, video_id)
+    video = db.session.get(Video, video_id)
+    if not video:
+        flash(f'Video #{video_id} was not found. Please select a video from your library.', 'warning')
+        return redirect(url_for('video.index'))
+
     notes = video.notes
     return render_template(
         'notes.html',
         video=video,
         notes=notes,
-        openai_configured=Config.is_openai_configured()
+        openai_configured=Config.is_ai_configured()
     )
 
 @notes_bp.route('/video/<int:video_id>/notes/generate', methods=['POST'])
 def generate_notes(video_id):
-    """Generate or regenerate Smart Notes via OpenAI LLM."""
-    video = db.get_or_404(Video, video_id)
+    """Generate or regenerate Smart Notes via LLM."""
+    video = db.session.get(Video, video_id)
+    if not video:
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json:
+            return jsonify({'success': False, 'error': f'Video #{video_id} was not found.'}), 404
+        flash(f'Video #{video_id} was not found.', 'warning')
+        return redirect(url_for('video.index'))
     
-    if not Config.is_openai_configured():
-        msg = 'OpenAI API key is missing. Please add your key to the .env file.'
+    if not Config.is_ai_configured():
+        msg = 'AI API key is missing. Please set GROQ_API_KEY in your environment.'
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json:
             return jsonify({'success': False, 'error': msg}), 400
         flash(msg, 'danger')

@@ -14,6 +14,19 @@ def create_app(config_class=Config):
     app.config['SECRET_KEY'] = secret
     app.secret_key = secret
 
+    # On Vercel serverless, copy bundled database to /tmp if not present
+    if Config.IS_VERCEL:
+        import shutil
+        from pathlib import Path
+        tmp_db = Path('/tmp/youtube_learning.db')
+        starter_db = Config.BASE_DIR / 'data' / 'starter_db.sqlite'
+        if starter_db.exists() and (not tmp_db.exists() or tmp_db.stat().st_size == 0):
+            try:
+                shutil.copyfile(starter_db, tmp_db)
+                print(f"[Vercel Init] Seeded /tmp database from {starter_db}")
+            except Exception as e:
+                print(f"[Vercel Init] Failed copying starter_db: {e}")
+
     # Initialize SQLAlchemy
     db.init_app(app)
 

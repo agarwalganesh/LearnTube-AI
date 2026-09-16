@@ -8,6 +8,7 @@ load_dotenv(BASE_DIR / '.env')
 
 class Config:
     """Application configuration settings."""
+    BASE_DIR = BASE_DIR
     SECRET_KEY = os.getenv('SECRET_KEY') or 'dev-secret-key-youtube-learning-assistant-2026-safe'
     
     # Check if running in Vercel / AWS Lambda serverless environment

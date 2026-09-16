@@ -8,7 +8,11 @@ flashcard_bp = Blueprint('flashcards', __name__)
 @flashcard_bp.route('/video/<int:video_id>/flashcards')
 def view_flashcards(video_id):
     """Render the revision flashcards page."""
-    video = db.get_or_404(Video, video_id)
+    video = db.session.get(Video, video_id)
+    if not video:
+        flash(f'Video #{video_id} was not found. Please select a video from your library.', 'warning')
+        return redirect(url_for('video.index'))
+
     cards = Flashcard.query.filter_by(video_id=video_id).order_by(Flashcard.id.asc()).all()
     cards_data = [c.to_dict() for c in cards]
     
@@ -16,16 +20,21 @@ def view_flashcards(video_id):
         'flashcards.html',
         video=video,
         flashcards=cards_data,
-        openai_configured=Config.is_openai_configured()
+        openai_configured=Config.is_ai_configured()
     )
 
 @flashcard_bp.route('/video/<int:video_id>/flashcards/generate', methods=['POST'])
 def generate_flashcards(video_id):
     """Generate or regenerate flashcards using LLM."""
-    video = db.get_or_404(Video, video_id)
+    video = db.session.get(Video, video_id)
+    if not video:
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json:
+            return jsonify({'success': False, 'error': f'Video #{video_id} was not found.'}), 404
+        flash(f'Video #{video_id} was not found.', 'warning')
+        return redirect(url_for('video.index'))
     
-    if not Config.is_openai_configured():
-        msg = 'OpenAI API key is missing. Please set OPENAI_API_KEY in .env.'
+    if not Config.is_ai_configured():
+        msg = 'AI API key is missing. Please set GROQ_API_KEY in your environment.'
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.is_json:
             return jsonify({'success': False, 'error': msg}), 400
         flash(msg, 'danger')
