@@ -1,6 +1,7 @@
 import os
 import re
-from typing import Dict, Any, List
+import requests
+from typing import Dict, Any, List, Optional
 from langchain_community.document_loaders import YoutubeLoader
 from youtube_transcript_api import (
     YouTubeTranscriptApi,
@@ -47,6 +48,33 @@ class TranscriptService:
             except Exception:
                 pass
         return YouTubeTranscriptApi() if callable(YouTubeTranscriptApi) else None
+
+    @classmethod
+    def fetch_from_supadata(cls, video_id: str) -> Optional[str]:
+        """Fetch transcript via Supadata API (bypasses cloud IP bans completely)."""
+        api_key = os.getenv('SUPADATA_API_KEY', '').strip()
+        if not api_key:
+            return None
+        try:
+            url = f"https://api.supadata.ai/v1/youtube/transcript?videoId={video_id}"
+            headers = {"x-api-key": api_key}
+            res = requests.get(url, headers=headers, timeout=20)
+            if res.status_code == 200:
+                data = res.json()
+                if isinstance(data, list):
+                    items = data
+                elif isinstance(data, dict):
+                    items = data.get('content') or data.get('segments') or data.get('data') or []
+                    if isinstance(items, str):
+                        return items
+                else:
+                    items = []
+                texts = [item.get('text', '') for item in items if isinstance(item, dict) and item.get('text')]
+                if texts:
+                    return " ".join(texts)
+        except Exception:
+            pass
+        return None
 
     @classmethod
     def extract_transcript(cls, youtube_url: str) -> Dict[str, Any]:
@@ -187,17 +215,26 @@ class TranscriptService:
                             last_error = str(fe)
 
             except TranscriptsDisabled:
-                return {
-                    'success': False,
-                    'video_id': video_id,
-                    'error': "Subtitles/captions are disabled for this video by the creator."
-                }
+                # Try cloud API fallback before giving up
+                supa_fallback = cls.fetch_from_supadata(video_id)
+                if supa_fallback:
+                    transcript_text = supa_fallback
+                else:
+                    return {
+                        'success': False,
+                        'video_id': video_id,
+                        'error': "Subtitles/captions are disabled for this video by the creator."
+                    }
             except NoTranscriptFound:
-                return {
-                    'success': False,
-                    'video_id': video_id,
-                    'error': "No captions or transcript found for this video. Please try a video with English or auto-generated subtitles."
-                }
+                supa_fallback = cls.fetch_from_supadata(video_id)
+                if supa_fallback:
+                    transcript_text = supa_fallback
+                else:
+                    return {
+                        'success': False,
+                        'video_id': video_id,
+                        'error': "No captions or transcript found for this video. Please try a video with English or auto-generated subtitles."
+                    }
             except VideoUnavailable:
                 return {
                     'success': False,
@@ -205,31 +242,45 @@ class TranscriptService:
                     'error': "The video is unavailable, private, or does not exist."
                 }
             except CouldNotRetrieveTranscript as cne:
-                err_str = str(cne)
-                if "IpBlocked" in err_str or "RequestBlocked" in err_str or "blocked" in err_str.lower():
+                supa_fallback = cls.fetch_from_supadata(video_id)
+                if supa_fallback:
+                    transcript_text = supa_fallback
+                else:
+                    err_str = str(cne)
+                    if "IpBlocked" in err_str or "RequestBlocked" in err_str or "blocked" in err_str.lower():
+                        return {
+                            'success': False,
+                            'video_id': video_id,
+                            'error': "YouTube blocked requests from cloud server IP (Vercel). Run the app locally via 'python app.py' on your computer where it works 100%!"
+                        }
                     return {
                         'success': False,
                         'video_id': video_id,
-                        'error': "YouTube blocked requests from cloud server IP (Vercel). Run the app locally via 'python app.py' on your computer where it works 100%!"
+                        'error': f"Could not retrieve video transcript: {err_str}"
                     }
-                return {
-                    'success': False,
-                    'video_id': video_id,
-                    'error': f"Could not retrieve video transcript: {err_str}"
-                }
             except Exception as e:
-                err_str = str(e)
-                if "IpBlocked" in err_str or "RequestBlocked" in err_str or "blocked" in err_str.lower():
+                supa_fallback = cls.fetch_from_supadata(video_id)
+                if supa_fallback:
+                    transcript_text = supa_fallback
+                else:
+                    err_str = str(e)
+                    if "IpBlocked" in err_str or "RequestBlocked" in err_str or "blocked" in err_str.lower():
+                        return {
+                            'success': False,
+                            'video_id': video_id,
+                            'error': "YouTube blocked requests from cloud server IP (Vercel). Run the app locally via 'python app.py' on your computer where it works 100%!"
+                        }
                     return {
                         'success': False,
                         'video_id': video_id,
-                        'error': "YouTube blocked requests from cloud server IP (Vercel). Run the app locally via 'python app.py' on your computer where it works 100%!"
+                        'error': f"Failed to retrieve transcript: {err_str}"
                     }
-                return {
-                    'success': False,
-                    'video_id': video_id,
-                    'error': f"Failed to retrieve transcript: {err_str}"
-                }
+
+        # 3. Third attempt: Supadata API if transcript is still empty
+        if not transcript_text.strip():
+            supa_fallback = cls.fetch_from_supadata(video_id)
+            if supa_fallback:
+                transcript_text = supa_fallback
 
         cleaned_transcript = cls.clean_text(transcript_text)
         if not cleaned_transcript:
