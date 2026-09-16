@@ -20,25 +20,41 @@ def chat_view(video_id):
 @chatbot_bp.route('/api/chat/<int:video_id>', methods=['POST'])
 def chat_api(video_id):
     """Handle student questions via the RAG pipeline."""
-    video = db.get_or_404(Video, video_id)
-    data = request.get_json() or {}
-    question = data.get('question', '').strip()
+    try:
+        video = db.session.get(Video, video_id)
+        if not video:
+            return jsonify({
+                'success': False,
+                'error': f'Video #{video_id} was not found in the database. Please select a valid video.'
+            }), 404
 
-    if not question:
-        return jsonify({'success': False, 'error': 'Please enter a question.'}), 400
+        data = request.get_json(silent=True) or {}
+        question = data.get('question', '').strip()
 
-    if not Config.is_openai_configured():
+        if not question:
+            return jsonify({'success': False, 'error': 'Please enter a question.'}), 400
+
+        if not Config.is_ai_configured():
+            return jsonify({
+                'success': False,
+                'error': 'AI API key is missing. Please set your GROQ_API_KEY to use the chatbot.'
+            }), 400
+
+        result = RAGService.answer_question(video_id=video_id, question=question)
+        return jsonify(result)
+    except Exception as e:
         return jsonify({
             'success': False,
-            'error': 'OpenAI API key is missing. Please add your key to the .env file to use the chatbot.'
-        }), 400
-
-    result = RAGService.answer_question(video_id=video_id, question=question)
-    return jsonify(result)
+            'error': f'Server error processing question: {str(e)}'
+        }), 500
 
 @chatbot_bp.route('/api/chat/<int:video_id>/clear', methods=['POST'])
 def clear_chat(video_id):
     """Clear chat history for a video."""
-    ChatMessage.query.filter_by(video_id=video_id).delete()
-    db.session.commit()
-    return jsonify({'success': True, 'message': 'Chat history cleared.'})
+    try:
+        ChatMessage.query.filter_by(video_id=video_id).delete()
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Chat history cleared.'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500

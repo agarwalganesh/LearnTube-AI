@@ -95,17 +95,35 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: JSON.stringify({ question: question })
             });
 
-            const data = await response.json();
+            let data;
+            const contentType = response.headers.get('content-type') || '';
+            if (contentType.includes('application/json')) {
+                data = await response.json();
+            } else {
+                const text = await response.text();
+                if (response.status === 504) {
+                    data = { success: false, error: 'Server took too long to generate an answer (Gateway Timeout 504). Please try asking a more specific question.' };
+                } else {
+                    data = { success: false, error: `Server returned error (${response.status}). Please try again.` };
+                }
+            }
+
             typingIndicator.remove();
 
-            if (data.success) {
+            if (response.ok && data.success) {
                 appendBubble('assistant', data.answer);
             } else {
-                appendBubble('assistant', `<span class="text-danger"><i class="bi bi-exclamation-triangle me-1"></i> ${data.answer || data.error || 'Something went wrong.'}</span>`);
+                const errorMsg = data.answer || data.error || `Error (${response.status}): Could not get an answer.`;
+                appendBubble('assistant', `<span class="text-danger"><i class="bi bi-exclamation-triangle me-1"></i> ${errorMsg}</span>`);
             }
         } catch (err) {
             typingIndicator.remove();
-            appendBubble('assistant', `<span class="text-danger"><i class="bi bi-exclamation-circle me-1"></i> Network error. Please try again.</span>`);
+            console.error('Chat error:', err);
+            const isOffline = !navigator.onLine;
+            const displayMsg = isOffline 
+                ? 'Your internet connection seems to be offline. Please check your network.' 
+                : `Request failed (${err.message || 'Server timeout'}). Please try again.`;
+            appendBubble('assistant', `<span class="text-danger"><i class="bi bi-exclamation-circle me-1"></i> ${displayMsg}</span>`);
         } finally {
             questionInput.disabled = false;
             sendBtn.disabled = false;

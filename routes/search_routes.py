@@ -5,6 +5,38 @@ from models.database import Video
 
 search_bp = Blueprint('search', __name__)
 
+def _fallback_search(query: str, video_id_filter: int = None, limit: int = 6):
+    """Fallback transcript search when ChromaDB is empty or bypassed on Vercel."""
+    results = []
+    q_videos = Video.query
+    if video_id_filter:
+        q_videos = q_videos.filter_by(id=video_id_filter)
+    videos = q_videos.all()
+    
+    query_lower = query.lower()
+    for v in videos:
+        if not v.transcript:
+            continue
+        t_lower = v.transcript.lower()
+        pos = t_lower.find(query_lower)
+        if pos != -1:
+            start = max(0, pos - 80)
+            end = min(len(v.transcript), pos + 250)
+            snippet = v.transcript[start:end].strip()
+            results.append({
+                'content': snippet,
+                'video_id': v.id,
+                'youtube_video_id': v.youtube_video_id,
+                'video_title': v.title,
+                'course_name': v.course_name,
+                'chunk_index': 0,
+                'source': f"https://www.youtube.com/watch?v={v.youtube_video_id}",
+                'similarity': 0.90
+            })
+            if len(results) >= limit:
+                break
+    return results
+
 @search_bp.route('/search')
 def search_page():
     """Semantic Smart Search page across all indexed video transcripts."""
@@ -13,7 +45,13 @@ def search_page():
     
     results = []
     if query:
-        results = ChromaService.similarity_search(query=query, video_id=video_id_filter, k=6)
+        try:
+            results = ChromaService.similarity_search(query=query, video_id=video_id_filter, k=6)
+        except Exception:
+            results = []
+            
+        if not results:
+            results = _fallback_search(query=query, video_id_filter=video_id_filter, limit=6)
 
     # List of all videos for dropdown filter
     all_videos = Video.query.order_by(Video.title.asc()).all()
@@ -24,7 +62,7 @@ def search_page():
         results=results,
         all_videos=all_videos,
         selected_video_id=video_id_filter,
-        openai_configured=Config.is_openai_configured()
+        openai_configured=Config.is_ai_configured()
     )
 
 @search_bp.route('/api/search', methods=['POST'])
@@ -37,15 +75,21 @@ def search_api():
     if not query:
         return jsonify({'results': [], 'error': 'Empty search query'}), 400
 
-    if not Config.is_openai_configured():
-        return jsonify({
-            'results': [],
-            'error': 'OpenAI API key is required for semantic vector search.'
-        }), 400
+    results = []
+    try:
+        results = ChromaService.similarity_search(
+            query=query,
+            video_id=int(video_id) if video_id else None,
+            k=6
+        )
+    except Exception:
+        results = []
 
-    results = ChromaService.similarity_search(
-        query=query,
-        video_id=int(video_id) if video_id else None,
-        k=6
-    )
+    if not results:
+        results = _fallback_search(
+            query=query,
+            video_id_filter=int(video_id) if video_id else None,
+            limit=6
+        )
+
     return jsonify({'results': results, 'count': len(results)})

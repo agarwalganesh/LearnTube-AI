@@ -13,7 +13,10 @@ class FlashcardService:
     def get_client(cls) -> Tuple[Optional[OpenAI], str]:
         """Obtain AI client and model name (Groq or OpenAI)."""
         if Config.GROQ_API_KEY and not Config.GROQ_API_KEY.startswith('your_'):
-            model = (Config.GROQ_MODEL or 'groq/compound').strip() or 'groq/compound'
+            default_model = 'groq/compound-mini' if Config.IS_VERCEL else 'groq/compound'
+            model = (Config.GROQ_MODEL or default_model).strip() or default_model
+            if Config.IS_VERCEL and model == 'groq/compound':
+                model = 'groq/compound-mini'
             return OpenAI(
                 api_key=Config.GROQ_API_KEY,
                 base_url=Config.GROQ_BASE_URL or 'https://api.groq.com/openai/v1'

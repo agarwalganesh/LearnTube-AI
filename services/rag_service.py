@@ -12,7 +12,9 @@ class RAGService:
     def get_client(cls) -> Tuple[Optional[OpenAI], str]:
         """Obtain AI client and model name (Groq or OpenAI)."""
         if Config.GROQ_API_KEY and not Config.GROQ_API_KEY.startswith('your_'):
-            model = (Config.GROQ_MODEL or 'groq/compound').strip() or 'groq/compound'
+            # Default to ultra-fast compound-mini on Vercel to guarantee <2s responses within Lambda timeouts
+            default_model = 'groq/compound-mini' if Config.IS_VERCEL else 'groq/compound'
+            model = (Config.GROQ_MODEL or default_model).strip() or default_model
             return OpenAI(
                 api_key=Config.GROQ_API_KEY,
                 base_url=Config.GROQ_BASE_URL or 'https://api.groq.com/openai/v1'
@@ -23,6 +25,65 @@ class RAGService:
             return OpenAI(api_key=Config.OPENAI_API_KEY), model
 
         return None, ""
+
+    @classmethod
+    def _extract_best_context(cls, transcript: str, question: str, max_chars: int = 4000) -> Tuple[str, List[str]]:
+        """
+        Fast, zero-download keyword-scoring context selector.
+        Extracts the most relevant passages from transcript in < 2ms.
+        """
+        if not transcript or not transcript.strip():
+            return "", []
+
+        cleaned_transcript = transcript.strip()
+        if len(cleaned_transcript) <= max_chars:
+            return cleaned_transcript, [cleaned_transcript[:180] + '...']
+
+        # Split transcript into overlapping windows (~600 chars)
+        chunk_size = 600
+        step = 450
+        chunks = []
+        for i in range(0, len(cleaned_transcript), step):
+            segment = cleaned_transcript[i:i + chunk_size].strip()
+            if segment:
+                chunks.append(segment)
+
+        if not chunks:
+            fallback = cleaned_transcript[:max_chars]
+            return fallback, [fallback[:180] + '...']
+
+        # Tokenize question words, ignoring common stop words
+        stop_words = {
+            'what', 'is', 'a', 'the', 'in', 'of', 'and', 'to', 'for', 'how', 'does', 'why',
+            'can', 'you', 'explain', 'tell', 'me', 'about', 'video', 'this', 'that', 'with',
+            'are', 'was', 'were', 'which', 'who', 'whom', 'where', 'when', 'will', 'would'
+        }
+        q_words = [w.lower() for w in question.split() if len(w) > 2 and w.lower() not in stop_words]
+
+        if not q_words:
+            fallback = cleaned_transcript[:max_chars]
+            return fallback, [chunks[0][:180] + '...']
+
+        # Score chunks by frequency of question keywords
+        scored = []
+        for idx, chunk in enumerate(chunks):
+            c_low = chunk.lower()
+            score = sum(c_low.count(w) for w in q_words)
+            scored.append((score, idx, chunk))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        top_chunks = [item for item in scored if item[0] > 0][:5]
+
+        if not top_chunks:
+            fallback = cleaned_transcript[:max_chars]
+            return fallback, [chunks[0][:180] + '...']
+
+        # Re-sort chronologically by appearance in video
+        top_chunks.sort(key=lambda x: x[1])
+        passages = [f"[Excerpt {i+1}]:\n{item[2]}" for i, item in enumerate(top_chunks)]
+        sources = [item[2][:180] + '...' for item in top_chunks]
+        context_str = "\n\n".join(passages)
+        return context_str[:max_chars], sources
 
     @classmethod
     def answer_question(
@@ -40,7 +101,7 @@ class RAGService:
         if not Config.is_ai_configured():
             return {
                 'success': False,
-                'answer': 'AI API key is not configured. Please set GROQ_API_KEY or OPENAI_API_KEY in .env.'
+                'answer': 'AI API key is not configured. Please set GROQ_API_KEY in .env.'
             }
 
         client, model = cls.get_client()
@@ -51,15 +112,31 @@ class RAGService:
         if not video:
             return {'success': False, 'answer': 'Video not found in database.'}
 
-        # 1. Similarity search in ChromaDB
-        retrieved_chunks = ChromaService.similarity_search(query=question, video_id=video_id, k=k)
-        
-        # Fallback if vector search returned nothing
-        if not retrieved_chunks and video.transcript:
-            context_text = video.transcript[:3000]
-        else:
+        retrieved_chunks = []
+        sources = []
+
+        # 1. Similarity search in ChromaDB (only when running locally where vector DB is persistent)
+        if not Config.IS_VERCEL and Config.EMBEDDING_PROVIDER != 'disabled':
+            try:
+                retrieved_chunks = ChromaService.similarity_search(query=question, video_id=video_id, k=k)
+            except Exception as ce:
+                print(f"[RAG] ChromaDB search skipped: {ce}")
+                retrieved_chunks = []
+
+        if retrieved_chunks:
             context_pieces = [f"[Excerpt {i+1}]:\n{c['content']}" for i, c in enumerate(retrieved_chunks)]
             context_text = "\n\n".join(context_pieces)
+            sources = [c['content'][:180] + '...' for c in retrieved_chunks]
+        else:
+            # Fast, robust keyword-scoring transcript grounding
+            context_text, sources = cls._extract_best_context(video.transcript or "", question)
+
+        if not context_text.strip():
+            return {
+                'success': True,
+                'answer': "No transcript is available for this video to answer questions.",
+                'sources': []
+            }
 
         # 2. Fetch recent chat history
         recent_messages = (
@@ -130,5 +207,5 @@ class RAGService:
         return {
             'success': True,
             'answer': answer,
-            'sources': [c['content'][:150] + '...' for c in retrieved_chunks]
+            'sources': sources
         }

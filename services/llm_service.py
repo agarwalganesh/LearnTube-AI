@@ -20,7 +20,10 @@ class LLMService:
                 api_key=Config.GROQ_API_KEY,
                 base_url=Config.GROQ_BASE_URL or 'https://api.groq.com/openai/v1'
             )
-            model = (Config.GROQ_MODEL or 'groq/compound').strip() or 'groq/compound'
+            default_model = 'groq/compound-mini' if Config.IS_VERCEL else 'groq/compound'
+            model = (Config.GROQ_MODEL or default_model).strip() or default_model
+            if Config.IS_VERCEL and model == 'groq/compound':
+                model = 'groq/compound-mini'
             return client, model
 
         # 2. Fallback to OpenAI

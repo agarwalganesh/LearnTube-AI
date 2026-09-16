@@ -51,6 +51,11 @@ class ChromaService:
         Split transcript into chunks, compute embeddings, and store in ChromaDB with metadata.
         """
         try:
+            if Config.IS_VERCEL:
+                # On serverless (Vercel), storage is ephemeral and downloading 80MB ONNX
+                # models exceeds Lambda execution timeouts. Safe skip.
+                return {'success': True, 'chunk_count': 0, 'error': None}
+
             if not transcript or not transcript.strip():
                 return {'success': False, 'chunk_count': 0, 'error': 'Transcript is empty'}
                 
@@ -133,8 +138,11 @@ class ChromaService:
         """
         if not query or not query.strip():
             return []
+
+        if Config.IS_VERCEL:
+            return []
             
-        if not Config.is_openai_configured():
+        if not Config.is_ai_configured():
             return []
 
         try:

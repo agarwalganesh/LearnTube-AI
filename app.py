@@ -1,5 +1,5 @@
 import os
-from flask import Flask, render_template
+from flask import Flask, render_template, request, jsonify
 from config import Config
 from models.database import db
 from routes import video_bp, notes_bp, chatbot_bp, flashcard_bp, search_bp
@@ -44,11 +44,15 @@ def create_app(config_class=Config):
     # Error Handlers
     @app.errorhandler(404)
     def page_not_found(e):
+        if request.path.startswith('/api/'):
+            return jsonify({'success': False, 'error': 'API endpoint or resource not found (404)'}), 404
         return render_template('base.html', error_title="404 - Page Not Found", error_msg="The requested page could not be found."), 404
 
     @app.errorhandler(500)
     def internal_error(e):
         db.session.rollback()
+        if request.path.startswith('/api/'):
+            return jsonify({'success': False, 'error': 'Internal server error (500). Please try again.'}), 500
         return render_template('base.html', error_title="500 - Server Error", error_msg="An unexpected error occurred. Please try again."), 500
 
     # Ensure database tables exist
