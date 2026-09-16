@@ -45,6 +45,9 @@ class Config:
     EMBEDDING_PROVIDER = os.getenv('EMBEDDING_PROVIDER', 'local').lower()
     EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small')
     
+    # Optional YouTube Proxy for Vercel/Cloud deployments
+    YOUTUBE_PROXY = os.getenv('YOUTUBE_PROXY', '')
+    
     @classmethod
     def is_ai_configured(cls) -> bool:
         """Check if any valid AI provider key has been provided."""

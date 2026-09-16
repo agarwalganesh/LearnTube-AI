@@ -1,3 +1,4 @@
+import os
 import re
 from typing import Dict, Any, List
 from langchain_community.document_loaders import YoutubeLoader
@@ -8,6 +9,11 @@ from youtube_transcript_api import (
     VideoUnavailable,
     CouldNotRetrieveTranscript
 )
+try:
+    from youtube_transcript_api.proxies import GenericProxyConfig
+except ImportError:
+    GenericProxyConfig = None
+
 from .youtube_service import YouTubeService
 
 class TranscriptService:
@@ -29,6 +35,18 @@ class TranscriptService:
         # Replace multiple spaces/newlines with single space
         cleaned = re.sub(r'\s+', ' ', cleaned)
         return cleaned.strip()
+
+    @classmethod
+    def _get_api(cls) -> Any:
+        """Initialize YouTubeTranscriptApi with proxy if configured in environment."""
+        proxy_url = os.getenv('YOUTUBE_PROXY') or os.getenv('HTTP_PROXY') or os.getenv('HTTPS_PROXY')
+        if proxy_url and GenericProxyConfig:
+            try:
+                proxy_config = GenericProxyConfig(http_url=proxy_url, https_url=proxy_url)
+                return YouTubeTranscriptApi(proxy_config=proxy_config)
+            except Exception:
+                pass
+        return YouTubeTranscriptApi() if callable(YouTubeTranscriptApi) else None
 
     @classmethod
     def extract_transcript(cls, youtube_url: str) -> Dict[str, Any]:
@@ -62,7 +80,7 @@ class TranscriptService:
                 loader = YoutubeLoader.from_youtube_url(
                     youtube_url,
                     add_video_info=True,
-                    language=["en", "en-US", "en-GB"]
+                    language=["en", "en-US", "en-GB", "en-IN", "hi"]
                 )
                 raw_docs = loader.load()
             except Exception:
@@ -70,7 +88,7 @@ class TranscriptService:
                 loader = YoutubeLoader.from_youtube_url(
                     youtube_url,
                     add_video_info=False,
-                    language=["en", "en-US", "en-GB"]
+                    language=["en", "en-US", "en-GB", "en-IN", "hi"]
                 )
                 raw_docs = loader.load()
 
@@ -83,11 +101,11 @@ class TranscriptService:
             # Continue to direct API fallback
             pass
 
-        # 2. Second attempt: Direct youtube_transcript_api with broader language support & auto-translation
+        # 2. Second attempt: Direct youtube_transcript_api with native transcript priority
         if not transcript_text.strip():
             last_error = None
             try:
-                api = YouTubeTranscriptApi() if callable(YouTubeTranscriptApi) else None
+                api = cls._get_api()
                 
                 # Fetch available transcript list
                 if api and hasattr(api, 'list'):
@@ -101,36 +119,58 @@ class TranscriptService:
                         except Exception:
                             pass
 
-                        # Priority 2: Auto-translate any available transcript to English
-                        if not t_obj:
+                        # If English transcript found, fetch it directly
+                        if t_obj:
+                            try:
+                                fetched = t_obj.fetch()
+                                if hasattr(fetched, 'to_raw_data'):
+                                    transcript_text = " ".join([s.get('text', '') for s in fetched.to_raw_data() if s.get('text')])
+                                else:
+                                    snippets = getattr(fetched, 'snippets', fetched)
+                                    transcript_text = " ".join([getattr(s, 'text', '') if hasattr(s, 'text') else str(s.get('text', '')) for s in snippets])
+                            except Exception as fe:
+                                last_error = str(fe)
+
+                        # Priority 2: Fetch any available transcript directly in its native language
+                        # (Many Hindi/Indian lectures have Hinglish captions tagged as 'hi',
+                        # and direct fetch NEVER triggers YouTube's translation ban!)
+                        if not transcript_text.strip():
+                            for t in transcript_list:
+                                try:
+                                    fetched = t.fetch()
+                                    if hasattr(fetched, 'to_raw_data'):
+                                        transcript_text = " ".join([s.get('text', '') for s in fetched.to_raw_data() if s.get('text')])
+                                    else:
+                                        snippets = getattr(fetched, 'snippets', fetched)
+                                        transcript_text = " ".join([getattr(s, 'text', '') if hasattr(s, 'text') else str(s.get('text', '')) for s in snippets])
+                                    if transcript_text.strip():
+                                        break
+                                except Exception as fe:
+                                    last_error = str(fe)
+
+                        # Priority 3: As a last fallback, attempt YouTube auto-translation to 'en'
+                        if not transcript_text.strip():
                             for t in transcript_list:
                                 if getattr(t, 'is_translatable', False):
                                     try:
-                                        t_obj = t.translate('en')
-                                        break
-                                    except Exception:
-                                        pass
+                                        t_trans = t.translate('en')
+                                        fetched = t_trans.fetch()
+                                        if hasattr(fetched, 'to_raw_data'):
+                                            transcript_text = " ".join([s.get('text', '') for s in fetched.to_raw_data() if s.get('text')])
+                                        else:
+                                            snippets = getattr(fetched, 'snippets', fetched)
+                                            transcript_text = " ".join([getattr(s, 'text', '') if hasattr(s, 'text') else str(s.get('text', '')) for s in snippets])
+                                        if transcript_text.strip():
+                                            break
+                                    except Exception as te:
+                                        last_error = str(te)
 
-                        # Priority 3: Any available transcript in its original language
-                        if not t_obj:
-                            for t in transcript_list:
-                                t_obj = t
-                                break
-
-                        if t_obj:
-                            fetched = t_obj.fetch()
-                            snippets = getattr(fetched, 'snippets', fetched)
-                            if hasattr(fetched, 'to_raw_data'):
-                                raw_snippets = fetched.to_raw_data()
-                                transcript_text = " ".join([s.get('text', '') for s in raw_snippets if s.get('text')])
-                            else:
-                                transcript_text = " ".join([getattr(s, 'text', '') if hasattr(s, 'text') else str(s.get('text', '')) for s in snippets])
                     except Exception as le:
                         last_error = str(le)
 
                 # Fallback to direct fetch if list was not used or returned empty
                 if not transcript_text.strip() and api and hasattr(api, 'fetch'):
-                    for lang_option in [['en', 'en-US', 'en-GB', 'en-IN'], None]:
+                    for lang_option in [['en', 'en-US', 'en-GB', 'en-IN', 'hi'], None]:
                         try:
                             if lang_option:
                                 fetched = api.fetch(video_id, languages=lang_option)
