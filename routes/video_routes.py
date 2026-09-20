@@ -49,8 +49,20 @@ def analyze_video():
         # Extract Transcript using LangChain YoutubeLoader or manual input
         extraction_result = TranscriptService.extract_transcript(youtube_url, manual_transcript=manual_transcript)
         if not extraction_result['success']:
-            flash(extraction_result['error'], 'danger')
-            return redirect(url_for('video.index'))
+
+            flash(extraction_result['error'], 'warning')
+            recent_videos = Video.query.order_by(Video.created_at.desc()).limit(6).all()
+            courses = db.session.query(Video.course_name).distinct().all()
+            courses_list = [c[0] for c in courses if c[0]]
+            return render_template(
+                'index.html',
+                recent_videos=recent_videos,
+                courses=courses_list,
+                openai_configured=Config.is_openai_configured(),
+                prefill_url=youtube_url,
+                prefill_course=course_name,
+                show_manual_transcript=True
+            )
 
 
         # Save to SQLite Database

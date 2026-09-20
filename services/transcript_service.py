@@ -233,11 +233,25 @@ class TranscriptService:
 
         cleaned_transcript = cls.clean_text(transcript_text)
         if not cleaned_transcript:
+            if last_error:
+                err_lower = last_error.lower()
+                if "ipblocked" in err_lower or "requestblocked" in err_lower or "blocked" in err_lower or "bot" in err_lower:
+                    return {
+                        'success': False,
+                        'video_id': video_id,
+                        'error': "YouTube blocked automatic transcript extraction from this server IP. Please use the 'Paste Transcript Manually' box below to proceed with this video!"
+                    }
+                return {
+                    'success': False,
+                    'video_id': video_id,
+                    'error': f"Could not retrieve video transcript ({last_error}). Please paste the transcript text in the 'Manual Transcript' box below!"
+                }
             return {
                 'success': False,
                 'video_id': video_id,
-                'error': "No transcript text could be retrieved. Please paste the transcript directly in the 'Manual Transcript' box."
+                'error': "No captions found for this video. Please paste the transcript text directly in the 'Manual Transcript' box below."
             }
+
 
         return {
             'success': True,
