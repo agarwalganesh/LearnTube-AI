@@ -9,12 +9,16 @@ from services.youtube_service import YouTubeService
 from services.transcript_service import TranscriptService
 from services.chroma_service import ChromaService
 
+from config import Config
+
+class TestConfig(Config):
+    TESTING = True
+    SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
+
 class TestYouTubeLearningAssistant(unittest.TestCase):
 
     def setUp(self):
-        self.app = create_app()
-        self.app.config['TESTING'] = True
-        self.app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+        self.app = create_app(TestConfig)
         self.client = self.app.test_client()
 
         with self.app.app_context():

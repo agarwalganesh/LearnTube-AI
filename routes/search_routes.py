@@ -53,6 +53,10 @@ def search_page():
         if not results:
             results = _fallback_search(query=query, video_id_filter=video_id_filter, limit=6)
 
+    # Filter out results whose video_id is not in SQLite to guarantee valid links
+    valid_ids = {v.id for v in Video.query.all()}
+    results = [r for r in results if r.get('video_id') in valid_ids]
+
     # List of all videos for dropdown filter
     all_videos = Video.query.order_by(Video.title.asc()).all()
 
@@ -91,5 +95,8 @@ def search_api():
             video_id_filter=int(video_id) if video_id else None,
             limit=6
         )
+
+    valid_ids = {v.id for v in Video.query.all()}
+    results = [r for r in results if r.get('video_id') in valid_ids]
 
     return jsonify({'results': results, 'count': len(results)})

@@ -13,7 +13,7 @@ class RAGService:
         """Obtain AI client and model name (Groq or OpenAI)."""
         if Config.GROQ_API_KEY and not Config.GROQ_API_KEY.startswith('your_'):
             # Default to ultra-fast compound-mini on Vercel to guarantee <2s responses within Lambda timeouts
-            default_model = 'groq/compound-mini' if Config.IS_VERCEL else 'groq/compound'
+            default_model = 'groq/compound-mini'
             model = (Config.GROQ_MODEL or default_model).strip() or default_model
             return OpenAI(
                 api_key=Config.GROQ_API_KEY,

@@ -13,7 +13,7 @@ class FlashcardService:
     def get_client(cls) -> Tuple[Optional[OpenAI], str]:
         """Obtain AI client and model name (Groq or OpenAI)."""
         if Config.GROQ_API_KEY and not Config.GROQ_API_KEY.startswith('your_'):
-            default_model = 'groq/compound-mini' if Config.IS_VERCEL else 'groq/compound'
+            default_model = 'groq/compound-mini'
             model = (Config.GROQ_MODEL or default_model).strip() or default_model
             if Config.IS_VERCEL and model == 'groq/compound':
                 model = 'groq/compound-mini'
@@ -88,26 +88,66 @@ class FlashcardService:
         )
 
         def _extract_cards(text: str) -> list:
-            if not text:
+            if not text or not text.strip():
                 return []
+
+            candidates = []
+
+            # 1. Extract content from markdown code fences ```json ... ``` or ``` ... ```
+            fence_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
+            if fence_match:
+                candidates.append(fence_match.group(1).strip())
+
+            # 2. Extract JSON object {...} or JSON array [...] using balanced / outer brackets
+            obj_matches = re.findall(r'(\{(?:[^{}]|(?R))*\})', text) if False else []
+            # Greedy and non-greedy object matches
+            obj_match = re.search(r'(\{[\s\S]*\})', text)
+            if obj_match:
+                candidates.append(obj_match.group(1).strip())
+
+            arr_match = re.search(r'(\[[\s\S]*\])', text)
+            if arr_match:
+                candidates.append(arr_match.group(1).strip())
+
+            # 3. Stripped raw text
             cleaned = re.sub(r'^```(?:json)?\s*', '', text.strip(), flags=re.MULTILINE)
             cleaned = re.sub(r'\s*```$', '', cleaned.strip(), flags=re.MULTILINE)
-            try:
-                parsed = json.loads(cleaned)
-                if isinstance(parsed, dict):
-                    return parsed.get("flashcards", [])
-                elif isinstance(parsed, list):
-                    return parsed
-            except Exception:
-                pass
-            match = re.search(r'(\{[\s\S]*\})', cleaned)
-            if match:
-                try:
-                    parsed = json.loads(match.group(1))
-                    if isinstance(parsed, dict):
-                        return parsed.get("flashcards", [])
-                except Exception:
-                    pass
+            candidates.append(cleaned)
+
+            def _parse_candidate(cand: str):
+                if not cand:
+                    return None
+                # Try direct parsing and trailing-comma cleaned parsing
+                for s in [cand, re.sub(r',\s*([\]\}])', r'\1', cand)]:
+                    try:
+                        parsed = json.loads(s, strict=False)
+                        if isinstance(parsed, dict):
+                            if "flashcards" in parsed and isinstance(parsed["flashcards"], list):
+                                return parsed["flashcards"]
+                            # Also check for other common keys like "cards" or "deck"
+                            for k in ["cards", "items", "data"]:
+                                if k in parsed and isinstance(parsed[k], list):
+                                    return parsed[k]
+                        elif isinstance(parsed, list):
+                            return parsed
+                    except Exception:
+                        pass
+                return None
+
+            for c in candidates:
+                result = _parse_candidate(c)
+                if result:
+                    # Validate that list contains dicts with question/answer or similar keys
+                    valid_cards = []
+                    for item in result:
+                        if isinstance(item, dict):
+                            q = item.get('question') or item.get('q') or item.get('front') or ''
+                            a = item.get('answer') or item.get('a') or item.get('back') or ''
+                            if q and a:
+                                valid_cards.append({'question': str(q).strip(), 'answer': str(a).strip()})
+                    if valid_cards:
+                        return valid_cards
+
             return []
 
         cards_data = []
@@ -130,6 +170,14 @@ class FlashcardService:
                 if '429' in str(e) or 'rate_limit' in str(e):
                     time.sleep(3)
                     continue
+                # Check if Groq validator failed but generated the text in 'failed_generation'
+                err_dict = getattr(e, 'body', None) or {}
+                if isinstance(err_dict, dict) and 'error' in err_dict:
+                    failed_gen = err_dict.get('error', {}).get('failed_generation')
+                    if failed_gen:
+                        cards_data = _extract_cards(failed_gen)
+                        if cards_data:
+                            break
                 time.sleep(1)
 
         if not cards_data:

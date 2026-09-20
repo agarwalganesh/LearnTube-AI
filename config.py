@@ -36,7 +36,7 @@ class Config:
     # Groq (100% Free)
     GROQ_API_KEY = (os.getenv('GROQ_API_KEY') or '').strip()
     GROQ_BASE_URL = (os.getenv('GROQ_BASE_URL') or 'https://api.groq.com/openai/v1').strip()
-    GROQ_MODEL = (os.getenv('GROQ_MODEL') or 'groq/compound').strip()
+    GROQ_MODEL = (os.getenv('GROQ_MODEL') or 'groq/compound-mini').strip()
     
     # OpenAI
     OPENAI_API_KEY = (os.getenv('OPENAI_API_KEY') or '').strip()

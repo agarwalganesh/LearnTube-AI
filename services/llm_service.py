@@ -20,7 +20,7 @@ class LLMService:
                 api_key=Config.GROQ_API_KEY,
                 base_url=Config.GROQ_BASE_URL or 'https://api.groq.com/openai/v1'
             )
-            default_model = 'groq/compound-mini' if Config.IS_VERCEL else 'groq/compound'
+            default_model = 'groq/compound-mini'
             model = (Config.GROQ_MODEL or default_model).strip() or default_model
             if Config.IS_VERCEL and model == 'groq/compound':
                 model = 'groq/compound-mini'
@@ -84,26 +84,37 @@ class LLMService:
         )
 
         def _extract_json(text: str) -> Optional[dict]:
-            if not text:
+            if not text or not text.strip():
                 return None
+
+            candidates = []
+
+            # 1. Extract content from markdown code fences ```json ... ``` or ``` ... ```
+            fence_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
+            if fence_match:
+                candidates.append(fence_match.group(1).strip())
+
+            # 2. Extract JSON object {...}
+            obj_match = re.search(r'(\{[\s\S]*\})', text)
+            if obj_match:
+                candidates.append(obj_match.group(1).strip())
+
+            # 3. Stripped raw text
             cleaned = re.sub(r'^```(?:json)?\s*', '', text.strip(), flags=re.MULTILINE)
             cleaned = re.sub(r'\s*```$', '', cleaned.strip(), flags=re.MULTILINE)
-            try:
-                return json.loads(cleaned)
-            except Exception:
-                pass
-            match = re.search(r'(\{[\s\S]*\})', cleaned)
-            if match:
-                candidate = match.group(1)
-                try:
-                    return json.loads(candidate)
-                except Exception:
-                    pass
-                fixed = re.sub(r',\s*([\]\}])', r'\1', candidate)
-                try:
-                    return json.loads(fixed)
-                except Exception:
-                    pass
+            candidates.append(cleaned)
+
+            for cand in candidates:
+                if not cand:
+                    continue
+                for s in [cand, re.sub(r',\s*([\]\}])', r'\1', cand)]:
+                    try:
+                        parsed = json.loads(s, strict=False)
+                        if isinstance(parsed, dict):
+                            return parsed
+                    except Exception:
+                        pass
+
             return None
 
         notes_data = None

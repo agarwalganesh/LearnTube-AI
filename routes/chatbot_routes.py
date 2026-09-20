@@ -1,4 +1,5 @@
-from flask import Blueprint, render_template, request, jsonify
+# pyrefly: ignore [missing-import]
+from flask import Blueprint, render_template, request, jsonify, flash, redirect, url_for
 from config import Config
 from models.database import db, Video, ChatMessage
 from services.rag_service import RAGService
