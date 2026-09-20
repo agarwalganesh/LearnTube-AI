@@ -30,7 +30,7 @@ class Config:
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
-    # LLM Provider ('groq' or 'openai')
+    # LLM Provider ('groq', 'openai', or 'gemini')
     LLM_PROVIDER = os.getenv('LLM_PROVIDER', 'groq').lower()
     
     # Groq (100% Free)
@@ -41,6 +41,11 @@ class Config:
     # OpenAI
     OPENAI_API_KEY = (os.getenv('OPENAI_API_KEY') or '').strip()
     OPENAI_MODEL = (os.getenv('OPENAI_MODEL') or 'gpt-4o-mini').strip()
+
+    # Google Gemini
+    GEMINI_API_KEY = (os.getenv('GEMINI_API_KEY') or '').strip()
+    GEMINI_BASE_URL = (os.getenv('GEMINI_BASE_URL') or 'https://generativelanguage.googleapis.com/v1beta/openai/').strip()
+    GEMINI_MODEL = (os.getenv('GEMINI_MODEL') or 'gemini-3.6-flash').strip()
     
     # Embeddings ('local' for free ONNX or 'openai')
     EMBEDDING_PROVIDER = os.getenv('EMBEDDING_PROVIDER', 'local').lower()
@@ -55,7 +60,8 @@ class Config:
         """Check if any valid AI provider key has been provided."""
         has_groq = bool(cls.GROQ_API_KEY and not cls.GROQ_API_KEY.startswith('your_'))
         has_openai = bool(cls.OPENAI_API_KEY and not cls.OPENAI_API_KEY.startswith('your_'))
-        return has_groq or has_openai
+        has_gemini = bool(cls.GEMINI_API_KEY and not cls.GEMINI_API_KEY.startswith('your_'))
+        return has_groq or has_openai or has_gemini
 
     @classmethod
     def is_openai_configured(cls) -> bool:

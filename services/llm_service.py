@@ -9,24 +9,46 @@ class LLMService:
     """Service for interacting with LLM (Groq or OpenAI) to generate notes and summaries."""
     
     @classmethod
-    def get_client(cls) -> Tuple[Optional[OpenAI], str]:
+    def get_client(cls, preferred_provider: Optional[str] = None) -> Tuple[Optional[OpenAI], str]:
         """
-        Instantiate LLM client. Prefers Groq if configured, otherwise OpenAI.
+        Instantiate LLM client. Respects preferred_provider or Config.LLM_PROVIDER.
+        Supports 'groq', 'gemini', and 'openai'.
         Returns (client, model_name).
         """
-        # 1. Try Groq (100% Free)
-        if Config.GROQ_API_KEY and not Config.GROQ_API_KEY.startswith('your_'):
-            client = OpenAI(
-                api_key=Config.GROQ_API_KEY,
-                base_url=Config.GROQ_BASE_URL or 'https://api.groq.com/openai/v1'
-            )
+        provider = (preferred_provider or Config.LLM_PROVIDER or 'groq').lower()
+
+        # If Gemini requested
+        if provider == 'gemini' and Config.GEMINI_API_KEY and not Config.GEMINI_API_KEY.startswith('your_'):
+            model = (Config.GEMINI_MODEL or 'gemini-3.6-flash').strip()
+            return OpenAI(
+                api_key=Config.GEMINI_API_KEY,
+                base_url=Config.GEMINI_BASE_URL or 'https://generativelanguage.googleapis.com/v1beta/openai/',
+                timeout=25.0
+            ), model
+
+        # If Groq requested
+        if provider == 'groq' and Config.GROQ_API_KEY and not Config.GROQ_API_KEY.startswith('your_'):
             default_model = 'groq/compound-mini'
             model = (Config.GROQ_MODEL or default_model).strip() or default_model
-            if Config.IS_VERCEL and model == 'groq/compound':
-                model = 'groq/compound-mini'
-            return client, model
+            return OpenAI(
+                api_key=Config.GROQ_API_KEY,
+                base_url=Config.GROQ_BASE_URL or 'https://api.groq.com/openai/v1'
+            ), model
 
-        # 2. Fallback to OpenAI
+        # Fallbacks by available credentials
+        if Config.GROQ_API_KEY and not Config.GROQ_API_KEY.startswith('your_'):
+            return OpenAI(
+                api_key=Config.GROQ_API_KEY,
+                base_url=Config.GROQ_BASE_URL or 'https://api.groq.com/openai/v1'
+            ), (Config.GROQ_MODEL or 'groq/compound-mini').strip()
+
+        if Config.GEMINI_API_KEY and not Config.GEMINI_API_KEY.startswith('your_'):
+            return OpenAI(
+                api_key=Config.GEMINI_API_KEY,
+                base_url=Config.GEMINI_BASE_URL or 'https://generativelanguage.googleapis.com/v1beta/openai/',
+                timeout=25.0
+            ), (Config.GEMINI_MODEL or 'gemini-3.6-flash').strip()
+
         if Config.OPENAI_API_KEY and not Config.OPENAI_API_KEY.startswith('your_'):
             model = (Config.OPENAI_MODEL or 'gpt-4o-mini').strip() or 'gpt-4o-mini'
             return OpenAI(api_key=Config.OPENAI_API_KEY), model
@@ -118,6 +140,7 @@ class LLMService:
             return None
 
         notes_data = None
+        last_error = None
         for attempt in range(3):
             try:
                 response = client.chat.completions.create(
@@ -128,13 +151,17 @@ class LLMService:
                         {"role": "user", "content": user_prompt}
                     ]
                 )
-                notes_data = _extract_json(response.choices[0].message.content)
+                raw_content = response.choices[0].message.content or ""
+                notes_data = _extract_json(raw_content)
                 if notes_data:
                     break
             except Exception as e:
-                # If rate limited, sleep briefly and retry
+                last_error = e
+                # Check for rate limit 429
                 if '429' in str(e) or 'rate_limit' in str(e):
-                    time.sleep(1.5)
+                    match = re.search(r'try again in ([\d\.]+)s', str(e))
+                    wait_sec = (float(match.group(1)) + 0.5) if match else (3.0 * (attempt + 1))
+                    time.sleep(wait_sec)
                     continue
                 # Check if Groq validator failed but generated the text in 'failed_generation'
                 err_dict = getattr(e, 'body', None) or {}
@@ -146,10 +173,28 @@ class LLMService:
                             break
                 time.sleep(1)
 
+        # If Groq failed, try Gemini fallback if available
+        if not notes_data and Config.GEMINI_API_KEY and not Config.GEMINI_API_KEY.startswith('your_') and 'gemini' not in model:
+            try:
+                gemini_client, gemini_model = cls.get_client(preferred_provider='gemini')
+                if gemini_client:
+                    response = gemini_client.chat.completions.create(
+                        model=gemini_model,
+                        temperature=0.2,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ]
+                    )
+                    raw_content = response.choices[0].message.content or ""
+                    notes_data = _extract_json(raw_content)
+            except Exception as ge:
+                print(f"[Notes] Gemini fallback attempt error: {ge}")
+
         if not notes_data:
             return {
                 'success': False,
-                'error': 'Could not parse structured notes from AI response. Please try again.'
+                'error': f'Could not parse structured notes from AI response. ({str(last_error) if last_error else ""})'
             }
 
         normalized_notes = {

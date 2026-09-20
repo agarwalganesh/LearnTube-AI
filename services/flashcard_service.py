@@ -10,17 +10,39 @@ class FlashcardService:
     """Service for generating and managing revision flashcards using Groq or OpenAI."""
 
     @classmethod
-    def get_client(cls) -> Tuple[Optional[OpenAI], str]:
-        """Obtain AI client and model name (Groq or OpenAI)."""
-        if Config.GROQ_API_KEY and not Config.GROQ_API_KEY.startswith('your_'):
+    def get_client(cls, preferred_provider: Optional[str] = None) -> Tuple[Optional[OpenAI], str]:
+        """Obtain AI client and model name (Groq, Gemini, or OpenAI)."""
+        provider = (preferred_provider or Config.LLM_PROVIDER or 'groq').lower()
+
+        if provider == 'gemini' and Config.GEMINI_API_KEY and not Config.GEMINI_API_KEY.startswith('your_'):
+            model = (Config.GEMINI_MODEL or 'gemini-3.6-flash').strip()
+            return OpenAI(
+                api_key=Config.GEMINI_API_KEY,
+                base_url=Config.GEMINI_BASE_URL or 'https://generativelanguage.googleapis.com/v1beta/openai/',
+                timeout=25.0
+            ), model
+
+        if provider == 'groq' and Config.GROQ_API_KEY and not Config.GROQ_API_KEY.startswith('your_'):
             default_model = 'groq/compound-mini'
             model = (Config.GROQ_MODEL or default_model).strip() or default_model
-            if Config.IS_VERCEL and model == 'groq/compound':
-                model = 'groq/compound-mini'
             return OpenAI(
                 api_key=Config.GROQ_API_KEY,
                 base_url=Config.GROQ_BASE_URL or 'https://api.groq.com/openai/v1'
             ), model
+
+        # Fallbacks by available credentials
+        if Config.GROQ_API_KEY and not Config.GROQ_API_KEY.startswith('your_'):
+            return OpenAI(
+                api_key=Config.GROQ_API_KEY,
+                base_url=Config.GROQ_BASE_URL or 'https://api.groq.com/openai/v1'
+            ), (Config.GROQ_MODEL or 'groq/compound-mini').strip()
+
+        if Config.GEMINI_API_KEY and not Config.GEMINI_API_KEY.startswith('your_'):
+            return OpenAI(
+                api_key=Config.GEMINI_API_KEY,
+                base_url=Config.GEMINI_BASE_URL or 'https://generativelanguage.googleapis.com/v1beta/openai/',
+                timeout=25.0
+            ), (Config.GEMINI_MODEL or 'gemini-3.6-flash').strip()
 
         if Config.OPENAI_API_KEY and not Config.OPENAI_API_KEY.startswith('your_'):
             model = (Config.OPENAI_MODEL or 'gpt-4o-mini').strip() or 'gpt-4o-mini'
@@ -168,7 +190,9 @@ class FlashcardService:
             except Exception as e:
                 last_err = e
                 if '429' in str(e) or 'rate_limit' in str(e):
-                    time.sleep(3)
+                    match = re.search(r'try again in ([\d\.]+)s', str(e))
+                    wait_sec = (float(match.group(1)) + 0.5) if match else (3.0 * (attempt + 1))
+                    time.sleep(wait_sec)
                     continue
                 # Check if Groq validator failed but generated the text in 'failed_generation'
                 err_dict = getattr(e, 'body', None) or {}
@@ -179,6 +203,24 @@ class FlashcardService:
                         if cards_data:
                             break
                 time.sleep(1)
+
+        # Fallback to Gemini if cards not generated and Gemini key is configured
+        if not cards_data and Config.GEMINI_API_KEY and not Config.GEMINI_API_KEY.startswith('your_') and 'gemini' not in model:
+            try:
+                gemini_client, gemini_model = cls.get_client(preferred_provider='gemini')
+                if gemini_client:
+                    response = gemini_client.chat.completions.create(
+                        model=gemini_model,
+                        temperature=0.3,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ]
+                    )
+                    raw_content = response.choices[0].message.content or ""
+                    cards_data = _extract_cards(raw_content)
+            except Exception as ge:
+                print(f"[Flashcards] Gemini fallback error: {ge}")
 
         if not cards_data:
             err_msg = str(last_err) if last_err else 'No flashcards were generated.'
