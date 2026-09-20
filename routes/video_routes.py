@@ -75,7 +75,11 @@ def analyze_video():
                     transcript=new_video.transcript
                 )
                 if chroma_res['success']:
-                    flash(f'Successfully analyzed and indexed {chroma_res["chunk_count"]} chunks in vector store!', 'success')
+                    count = chroma_res.get("chunk_count", 0)
+                    if count > 0:
+                        flash(f'Successfully analyzed and indexed {count} chunks in vector store!', 'success')
+                    else:
+                        flash('Successfully analyzed video and prepared transcript for instant AI study!', 'success')
                 else:
                     flash(f'Video saved, but ChromaDB indexing had an issue: {chroma_res.get("error")}', 'warning')
             except Exception as ce:
