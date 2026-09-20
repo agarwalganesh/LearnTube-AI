@@ -51,9 +51,8 @@ class Config:
     EMBEDDING_PROVIDER = os.getenv('EMBEDDING_PROVIDER', 'local').lower()
     EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small')
     
-    # Optional YouTube Proxy & Cloud Transcript API for Vercel/Cloud deployments
+    # Optional YouTube Proxy for Vercel/Cloud deployments
     YOUTUBE_PROXY = os.getenv('YOUTUBE_PROXY', '')
-    SUPADATA_API_KEY = os.getenv('SUPADATA_API_KEY', '')
     
     @classmethod
     def is_ai_configured(cls) -> bool:
@@ -67,3 +66,80 @@ class Config:
     def is_openai_configured(cls) -> bool:
         """Backwards-compatible check for template and route rendering."""
         return cls.is_ai_configured()
+
+    @classmethod
+    def get_chat_model(cls, temperature: float = 0.2, max_tokens: int = None, preferred_provider: str = None):
+        """
+        Returns a standardized LangChain ChatOpenAI instance configured for
+        Groq, OpenAI, or Gemini.
+        """
+        from langchain_openai import ChatOpenAI
+
+        provider = (preferred_provider or cls.LLM_PROVIDER or 'groq').lower()
+
+        # 1. Preferred or primary: Groq
+        if provider == 'groq' and cls.GROQ_API_KEY and not cls.GROQ_API_KEY.startswith('your_'):
+            model = (cls.GROQ_MODEL or 'groq/compound-mini').strip()
+            kwargs = {
+                'api_key': cls.GROQ_API_KEY,
+                'base_url': cls.GROQ_BASE_URL or 'https://api.groq.com/openai/v1',
+                'model': model,
+                'temperature': temperature,
+                'max_retries': 2,
+                'timeout': 30
+            }
+            if max_tokens:
+                kwargs['max_tokens'] = max_tokens
+            return ChatOpenAI(**kwargs)
+
+        # 2. Preferred or fallback: OpenAI
+        if provider == 'openai' and cls.OPENAI_API_KEY and not cls.OPENAI_API_KEY.startswith('your_'):
+            model = (cls.OPENAI_MODEL or 'gpt-4o-mini').strip()
+            kwargs = {
+                'api_key': cls.OPENAI_API_KEY,
+                'model': model,
+                'temperature': temperature,
+                'max_retries': 2,
+                'timeout': 30
+            }
+            if max_tokens:
+                kwargs['max_tokens'] = max_tokens
+            return ChatOpenAI(**kwargs)
+
+        # 3. Preferred or fallback: Gemini
+        if provider == 'gemini' and cls.GEMINI_API_KEY and not cls.GEMINI_API_KEY.startswith('your_'):
+            model = (cls.GEMINI_MODEL or 'gemini-3.6-flash').strip()
+            kwargs = {
+                'api_key': cls.GEMINI_API_KEY,
+                'base_url': cls.GEMINI_BASE_URL or 'https://generativelanguage.googleapis.com/v1beta/openai/',
+                'model': model,
+                'temperature': temperature,
+                'max_retries': 2,
+                'timeout': 30
+            }
+            if max_tokens:
+                kwargs['max_tokens'] = max_tokens
+            return ChatOpenAI(**kwargs)
+
+        # Fallback to whichever key exists
+        if cls.GROQ_API_KEY and not cls.GROQ_API_KEY.startswith('your_'):
+            model = (cls.GROQ_MODEL or 'groq/compound-mini').strip()
+            return ChatOpenAI(
+                api_key=cls.GROQ_API_KEY,
+                base_url=cls.GROQ_BASE_URL or 'https://api.groq.com/openai/v1',
+                model=model,
+                temperature=temperature,
+                max_retries=2,
+                timeout=30
+            )
+
+        if cls.OPENAI_API_KEY and not cls.OPENAI_API_KEY.startswith('your_'):
+            return ChatOpenAI(
+                api_key=cls.OPENAI_API_KEY,
+                model=cls.OPENAI_MODEL or 'gpt-4o-mini',
+                temperature=temperature,
+                max_retries=2,
+                timeout=30
+            )
+
+        return None

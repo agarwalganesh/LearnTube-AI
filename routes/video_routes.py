@@ -28,6 +28,7 @@ def analyze_video():
     try:
         youtube_url = request.form.get('youtube_url', '').strip()
         course_name = request.form.get('course_name', '').strip() or 'General'
+        manual_transcript = request.form.get('manual_transcript', '').strip()
 
         if not youtube_url:
             flash('Please enter a valid YouTube video URL.', 'danger')
@@ -45,11 +46,12 @@ def analyze_video():
             flash(f'"{existing_video.title}" is already in your learning library!', 'info')
             return redirect(url_for('video.view_video', video_id=existing_video.id))
 
-        # Extract Transcript using LangChain YoutubeLoader
-        extraction_result = TranscriptService.extract_transcript(youtube_url)
+        # Extract Transcript using LangChain YoutubeLoader or manual input
+        extraction_result = TranscriptService.extract_transcript(youtube_url, manual_transcript=manual_transcript)
         if not extraction_result['success']:
             flash(extraction_result['error'], 'danger')
             return redirect(url_for('video.index'))
+
 
         # Save to SQLite Database
         normalized_url = YouTubeService.normalize_url(video_id)

@@ -158,5 +158,49 @@ class TestYouTubeLearningAssistant(unittest.TestCase):
         res = self.client.post(f'/video/{vid_id}/toggle-complete', follow_redirects=True)
         self.assertEqual(res.status_code, 200)
 
+    def test_langgraph_schemas(self):
+        """Test validation of LangGraph Pydantic structured output schemas."""
+        from services.graphs.schemas import NotesSchema, FlashcardsSchema
+
+        notes_dict = {
+            "summary": "Overview of calculus",
+            "key_points": ["Derivatives", "Integrals"],
+            "definitions": [{"term": "Derivative", "definition": "Rate of change"}],
+            "formulas": ["dy/dx = lim h->0 (f(x+h) - f(x))/h"],
+            "examples": ["Velocity is derivative of position"],
+            "important_concepts": ["Chain rule"]
+        }
+        notes = NotesSchema.model_validate(notes_dict)
+        self.assertEqual(notes.summary, "Overview of calculus")
+        self.assertEqual(len(notes.definitions), 1)
+        self.assertEqual(notes.definitions[0].term, "Derivative")
+
+        fc_dict = {
+            "flashcards": [
+                {"question": "What is a derivative?", "answer": "The instantaneous rate of change."}
+            ]
+        }
+        fcs = FlashcardsSchema.model_validate(fc_dict)
+        self.assertEqual(len(fcs.flashcards), 1)
+        self.assertEqual(fcs.flashcards[0].question, "What is a derivative?")
+
+    def test_langgraph_compilation(self):
+        """Test that VideoAnalysisGraph and RAGGraph compile properly."""
+        from services.graphs.video_analysis_graph import video_analysis_graph
+        from services.graphs.rag_graph import rag_graph
+
+        self.assertIsNotNone(video_analysis_graph)
+        self.assertIsNotNone(rag_graph)
+
+    def test_manual_transcript_fallback(self):
+        """Test that manual transcript bypasses YouTube API when cloud IP is blocked."""
+        res = TranscriptService.extract_transcript(
+            youtube_url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            manual_transcript="This is a manually pasted transcript for cloud deployment."
+        )
+        self.assertTrue(res['success'])
+        self.assertIn("manually pasted transcript", res['transcript'])
+
 if __name__ == '__main__':
     unittest.main()
+

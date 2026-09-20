@@ -1,6 +1,5 @@
 import os
 import re
-import requests
 from typing import Dict, Any, List, Optional
 from langchain_community.document_loaders import YoutubeLoader
 from youtube_transcript_api import (
@@ -31,9 +30,7 @@ class TranscriptService:
         if not text:
             return ""
             
-        # Remove audio cues like [Music], [Applause], [laughter], [Inaudible]
         cleaned = re.sub(r'\[.*?\]|\(.*?\)', ' ', text)
-        # Replace multiple spaces/newlines with single space
         cleaned = re.sub(r'\s+', ' ', cleaned)
         return cleaned.strip()
 
@@ -50,36 +47,9 @@ class TranscriptService:
         return YouTubeTranscriptApi() if callable(YouTubeTranscriptApi) else None
 
     @classmethod
-    def fetch_from_supadata(cls, video_id: str) -> Optional[str]:
-        """Fetch transcript via Supadata API (bypasses cloud IP bans completely)."""
-        api_key = os.getenv('SUPADATA_API_KEY', '').strip()
-        if not api_key:
-            return None
-        try:
-            url = f"https://api.supadata.ai/v1/youtube/transcript?videoId={video_id}"
-            headers = {"x-api-key": api_key}
-            res = requests.get(url, headers=headers, timeout=20)
-            if res.status_code == 200:
-                data = res.json()
-                if isinstance(data, list):
-                    items = data
-                elif isinstance(data, dict):
-                    items = data.get('content') or data.get('segments') or data.get('data') or []
-                    if isinstance(items, str):
-                        return items
-                else:
-                    items = []
-                texts = [item.get('text', '') for item in items if isinstance(item, dict) and item.get('text')]
-                if texts:
-                    return " ".join(texts)
-        except Exception:
-            pass
-        return None
-
-    @classmethod
-    def extract_transcript(cls, youtube_url: str) -> Dict[str, Any]:
+    def extract_transcript(cls, youtube_url: str, manual_transcript: Optional[str] = None) -> Dict[str, Any]:
         """
-        Extract video transcript using LangChain's YoutubeLoader with robust fallbacks.
+        Extract video transcript using manual text, LangChain's YoutubeLoader, or direct API.
         
         Returns:
             dict: {
@@ -97,13 +67,25 @@ class TranscriptService:
 
         metadata = YouTubeService.get_video_metadata(video_id)
         video_title = metadata.get('title', f"Video ({video_id})")
-        
+
+        # 1. If user provided a manual transcript fallback (useful when YouTube blocks cloud IPs)
+        if manual_transcript and manual_transcript.strip():
+            cleaned = cls.clean_text(manual_transcript)
+            if cleaned:
+                return {
+                    'success': True,
+                    'video_id': video_id,
+                    'title': video_title,
+                    'transcript': cleaned,
+                    'raw_docs': [],
+                    'error': None
+                }
+
         transcript_text = ""
         raw_docs = []
 
-        # 1. First attempt: LangChain YoutubeLoader
+        # 2. First attempt: LangChain YoutubeLoader
         try:
-            # Try with add_video_info=True first as specified in requirements
             try:
                 loader = YoutubeLoader.from_youtube_url(
                     youtube_url,
@@ -112,7 +94,6 @@ class TranscriptService:
                 )
                 raw_docs = loader.load()
             except Exception:
-                # Fallback if pytube / video_info fails
                 loader = YoutubeLoader.from_youtube_url(
                     youtube_url,
                     add_video_info=False,
@@ -125,29 +106,25 @@ class TranscriptService:
                 if raw_docs[0].metadata and 'title' in raw_docs[0].metadata:
                     video_title = raw_docs[0].metadata['title'] or video_title
 
-        except Exception as e:
-            # Continue to direct API fallback
+        except Exception:
             pass
 
-        # 2. Second attempt: Direct youtube_transcript_api with native transcript priority
+        # 3. Second attempt: Direct youtube_transcript_api with native transcript priority
         if not transcript_text.strip():
             last_error = None
             try:
                 api = cls._get_api()
                 
-                # Fetch available transcript list
                 if api and hasattr(api, 'list'):
                     try:
                         transcript_list = api.list(video_id)
                         t_obj = None
                         
-                        # Priority 1: English variants (manual or auto-generated)
                         try:
                             t_obj = transcript_list.find_transcript(['en', 'en-US', 'en-GB', 'en-IN', 'en-CA', 'en-AU'])
                         except Exception:
                             pass
 
-                        # If English transcript found, fetch it directly
                         if t_obj:
                             try:
                                 fetched = t_obj.fetch()
@@ -159,9 +136,6 @@ class TranscriptService:
                             except Exception as fe:
                                 last_error = str(fe)
 
-                        # Priority 2: Fetch any available transcript directly in its native language
-                        # (Many Hindi/Indian lectures have Hinglish captions tagged as 'hi',
-                        # and direct fetch NEVER triggers YouTube's translation ban!)
                         if not transcript_text.strip():
                             for t in transcript_list:
                                 try:
@@ -176,7 +150,6 @@ class TranscriptService:
                                 except Exception as fe:
                                     last_error = str(fe)
 
-                        # Priority 3: As a last fallback, attempt YouTube auto-translation to 'en'
                         if not transcript_text.strip():
                             for t in transcript_list:
                                 if getattr(t, 'is_translatable', False):
@@ -196,7 +169,6 @@ class TranscriptService:
                     except Exception as le:
                         last_error = str(le)
 
-                # Fallback to direct fetch if list was not used or returned empty
                 if not transcript_text.strip() and api and hasattr(api, 'fetch'):
                     for lang_option in [['en', 'en-US', 'en-GB', 'en-IN', 'hi'], None]:
                         try:
@@ -215,26 +187,17 @@ class TranscriptService:
                             last_error = str(fe)
 
             except TranscriptsDisabled:
-                # Try cloud API fallback before giving up
-                supa_fallback = cls.fetch_from_supadata(video_id)
-                if supa_fallback:
-                    transcript_text = supa_fallback
-                else:
-                    return {
-                        'success': False,
-                        'video_id': video_id,
-                        'error': "Subtitles/captions are disabled for this video by the creator."
-                    }
+                return {
+                    'success': False,
+                    'video_id': video_id,
+                    'error': "Subtitles/captions are disabled for this video. You can paste the transcript manually below!"
+                }
             except NoTranscriptFound:
-                supa_fallback = cls.fetch_from_supadata(video_id)
-                if supa_fallback:
-                    transcript_text = supa_fallback
-                else:
-                    return {
-                        'success': False,
-                        'video_id': video_id,
-                        'error': "No captions or transcript found for this video. Please try a video with English or auto-generated subtitles."
-                    }
+                return {
+                    'success': False,
+                    'video_id': video_id,
+                    'error': "No captions found for this video. You can paste the transcript text manually below!"
+                }
             except VideoUnavailable:
                 return {
                     'success': False,
@@ -242,64 +205,38 @@ class TranscriptService:
                     'error': "The video is unavailable, private, or does not exist."
                 }
             except CouldNotRetrieveTranscript as cne:
-                supa_fallback = cls.fetch_from_supadata(video_id)
-                if supa_fallback:
-                    transcript_text = supa_fallback
-                else:
-                    err_str = str(cne)
-                    if "IpBlocked" in err_str or "RequestBlocked" in err_str or "blocked" in err_str.lower():
-                        return {
-                            'success': False,
-                            'video_id': video_id,
-                            'error': "YouTube blocked requests from cloud server IP (Vercel). Run the app locally via 'python app.py' on your computer where it works 100%!"
-                        }
+                err_str = str(cne)
+                if "IpBlocked" in err_str or "RequestBlocked" in err_str or "blocked" in err_str.lower():
                     return {
                         'success': False,
                         'video_id': video_id,
-                        'error': f"Could not retrieve video transcript: {err_str}"
-                    }
-            except Exception as e:
-                supa_fallback = cls.fetch_from_supadata(video_id)
-                if supa_fallback:
-                    transcript_text = supa_fallback
-                else:
-                    err_str = str(e)
-                    if "IpBlocked" in err_str or "RequestBlocked" in err_str or "blocked" in err_str.lower():
-                        return {
-                            'success': False,
-                            'video_id': video_id,
-                            'error': "YouTube blocked requests from cloud server IP (Vercel). Run the app locally via 'python app.py' on your computer where it works 100%!"
-                        }
-                    return {
-                        'success': False,
-                        'video_id': video_id,
-                        'error': f"Failed to retrieve transcript: {err_str}"
-                    }
-
-        # 3. Third attempt: Supadata API if transcript is still empty
-        if not transcript_text.strip():
-            supa_fallback = cls.fetch_from_supadata(video_id)
-            if supa_fallback:
-                transcript_text = supa_fallback
-
-        cleaned_transcript = cls.clean_text(transcript_text)
-        if not cleaned_transcript:
-            if last_error:
-                if "IpBlocked" in last_error or "RequestBlocked" in last_error or "blocked" in last_error.lower():
-                    return {
-                        'success': False,
-                        'video_id': video_id,
-                        'error': "YouTube blocked requests from cloud server IP (Vercel). Run the app locally via 'python app.py' on your computer where it works 100%!"
+                        'error': "YouTube blocked requests from cloud server IP. Please paste the transcript text below directly in the Manual Transcript box!"
                     }
                 return {
                     'success': False,
                     'video_id': video_id,
-                    'error': f"Could not extract transcript: {last_error}"
+                    'error': f"Could not retrieve video transcript: {err_str}"
                 }
+            except Exception as e:
+                err_str = str(e)
+                if "IpBlocked" in err_str or "RequestBlocked" in err_str or "blocked" in err_str.lower():
+                    return {
+                        'success': False,
+                        'video_id': video_id,
+                        'error': "YouTube blocked requests from cloud server IP. Please paste the transcript text below directly in the Manual Transcript box!"
+                    }
+                return {
+                    'success': False,
+                    'video_id': video_id,
+                    'error': f"Failed to retrieve transcript: {err_str}"
+                }
+
+        cleaned_transcript = cls.clean_text(transcript_text)
+        if not cleaned_transcript:
             return {
                 'success': False,
                 'video_id': video_id,
-                'error': "No subtitles found for this video. Please try an educational video with subtitles enabled."
+                'error': "No transcript text could be retrieved. Please paste the transcript directly in the 'Manual Transcript' box."
             }
 
         return {
