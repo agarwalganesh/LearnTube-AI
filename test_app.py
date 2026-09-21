@@ -311,8 +311,9 @@ class TestYouTubeLearningAssistant(unittest.TestCase):
         self.assertIn("manually pasted transcript", res['transcript'])
 
     def test_third_party_fallback_returns_clean_text(self):
-        """When direct API is IP-blocked, the third-party provider must be tried
-        and its payload cleaned into a single concatenated string."""
+        """When direct API is IP-blocked AND a third-party URL is configured,
+        the third-party provider must be tried and its payload cleaned into a
+        single concatenated string."""
         import unittest.mock as mock
 
         fake_payload = {
@@ -335,10 +336,11 @@ class TestYouTubeLearningAssistant(unittest.TestCase):
             with mock.patch('services.transcript_service.requests.get') as get_mock:
                 get_mock.return_value.status_code = 200
                 get_mock.return_value.json.return_value = fake_payload
-                # Make sure no proxy is set so the LangChain path runs (and gets
-                # blocked), then the direct API is mocked blocked, then third-party.
+                # Clear all proxy vars + opt INTO the third-party provider
                 env = {k: v for k, v in os.environ.items()
-                       if k not in ('YOUTUBE_PROXY', 'HTTP_PROXY', 'HTTPS_PROXY')}
+                       if k not in ('YOUTUBE_PROXY', 'HTTP_PROXY', 'HTTPS_PROXY',
+                                     'TRANSCRIPT_PROVIDER_URL', 'TRANSCRIPT_PROVIDER_TIMEOUT')}
+                env['TRANSCRIPT_PROVIDER_URL'] = 'https://my-transcript-proxy.example.com'
                 with mock.patch.dict(os.environ, env, clear=True):
                     res = TranscriptService.extract_transcript(
                         youtube_url='https://www.youtube.com/watch?v=dQw4w9WgXcQ',
@@ -348,6 +350,44 @@ class TestYouTubeLearningAssistant(unittest.TestCase):
         self.assertTrue(res['success'])
         self.assertIn("We're no strangers to love", res['transcript'])
         self.assertIn("so do I", res['transcript'])
+
+    def test_third_party_disabled_by_default(self):
+        """With no TRANSCRIPT_PROVIDER_URL set, the third-party slot must be
+        skipped silently and the user must see a clear proxy guidance message
+        (not a 10s timeout on the broken default endpoint)."""
+        import unittest.mock as mock
+
+        transcript_calls = []
+
+        def _track_get(*args, **kwargs):
+            # Record the URL so we can verify the third-party provider was
+            # never hit (oEmbed for video title is fine).
+            transcript_calls.append(args[0] if args else kwargs.get('url', ''))
+            resp = mock.MagicMock()
+            resp.status_code = 404
+            resp.json.return_value = {}
+            return resp
+
+        with mock.patch.object(TranscriptService, '_fetch_via_langchain',
+                               return_value=("", [], "langchain_blocked")):
+            with mock.patch.object(TranscriptService, '_fetch_via_youtube_transcript_api',
+                                   return_value=("", "ip_blocked")):
+                with mock.patch('services.transcript_service.requests.get', side_effect=_track_get):
+                    env = {k: v for k, v in os.environ.items()
+                           if k not in ('YOUTUBE_PROXY', 'HTTP_PROXY', 'HTTPS_PROXY',
+                                         'TRANSCRIPT_PROVIDER_URL')}
+                    with mock.patch.dict(os.environ, env, clear=True):
+                        res = TranscriptService.extract_transcript(
+                            youtube_url='https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                            manual_transcript=None,
+                        )
+
+        self.assertFalse(res['success'])
+        self.assertIn('YOUTUBE_PROXY', res['error'])
+        self.assertIn('residential proxy', res['error'])
+        # No call to the third-party transcript endpoint.
+        transcript_endpoints = [u for u in transcript_calls if 'transcript' in str(u)]
+        self.assertEqual(transcript_endpoints, [], f"Third-party endpoint was hit: {transcript_endpoints}")
 
     def test_proxy_config_skips_langchain_loader(self):
         """When YOUTUBE_PROXY is set, the LangChain loader must be skipped

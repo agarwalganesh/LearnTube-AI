@@ -17,10 +17,22 @@ except ImportError:
 
 from .youtube_service import YouTubeService
 
-# Default third-party transcript provider. Used as a fallback when YouTube
-# directly blocks cloud server IPs. Override via the TRANSCRIPT_PROVIDER_URL
-# environment variable (e.g. point it at a self-hosted service).
-DEFAULT_THIRDPARTY_URL = os.getenv('TRANSCRIPT_PROVIDER_URL', 'https://yt.lemnoslife.com')
+# Third-party transcript provider. Used as a fallback when YouTube directly
+# blocks cloud server IPs and the user has not configured YOUTUBE_PROXY.
+#
+# IMPORTANT: every public transcript service we've probed (yt.lemnoslife.com,
+# public Invidious instances, piped, Innertube from cloud IPs) either returns
+# 5xx, 403, or "Video unavailable". For cloud deployments, the only reliable
+# path is a residential proxy (YOUTUBE_PROXY). This third-party slot is here
+# for users who self-host their own transcript proxy (e.g. a Cloudflare Worker
+# wrapping yt-dlp on a residential VPS) and point TRANSCRIPT_PROVIDER_URL at
+# it. Default is DISABLED — leave it off unless you have a working endpoint.
+THIRDPARTY_TIMEOUT_SECS = float(os.getenv('TRANSCRIPT_PROVIDER_TIMEOUT', '3'))
+
+
+def _get_thirdparty_url() -> str:
+    """Read TRANSCRIPT_PROVIDER_URL at call time so tests / runtime overrides work."""
+    return os.getenv('TRANSCRIPT_PROVIDER_URL', '').strip()
 
 
 class TranscriptService:
@@ -199,22 +211,32 @@ class TranscriptService:
 
     @classmethod
     def _fetch_via_third_party(cls, video_id: str) -> Tuple[str, Optional[str]]:
-        """Fallback to a third-party transcript provider.
+        """Fallback to a self-hosted third-party transcript provider.
 
-        The default provider (yt.lemnoslife.com) is a public YouTube metadata
-        service that some users have reported works for cloud IPs. Treat it as
-        best-effort — it can rate-limit, return 5xx, or vanish. Configure
-        TRANSCRIPT_PROVIDER_URL in your environment to swap providers.
+        Disabled unless TRANSCRIPT_PROVIDER_URL is set in the environment. Every
+        public free provider we've probed (yt.lemnoslife.com, Invidious
+        instances, piped, YouTube Innertube from cloud IPs) fails for cloud
+        deployments, so the default is intentionally empty. Point this at your
+        own transcript proxy (e.g. a Cloudflare Worker wrapping yt-dlp on a
+        residential VPS) to enable the fallback.
 
-        Returns (transcript_text, error_str).
+        The provider is expected to expose a GET endpoint that returns JSON
+        shaped like:
+            {"items": [{"transcript": {"items": [{"text": "..."}]}}]}
+
+        Returns (transcript_text, error_str). An empty text with no error
+        means "no transcript available from this provider".
         """
+        if not _get_thirdparty_url():
+            return "", "thirdparty_disabled"
+
         try:
-            base = DEFAULT_THIRDPARTY_URL.rstrip('/')
+            base = _get_thirdparty_url().rstrip('/')
             url = f"{base}/videos"
             resp = requests.get(
                 url,
                 params={"part": "transcript", "id": video_id},
-                timeout=10,
+                timeout=THIRDPARTY_TIMEOUT_SECS,
                 headers={"User-Agent": "LearnTube-AI/1.0"},
             )
             if resp.status_code != 200:
@@ -286,6 +308,7 @@ class TranscriptService:
         transcript_text = ""
         raw_docs: List[Any] = []
         last_error: Optional[str] = None
+        ip_blocked_seen = False
 
         # 2. LangChain loader (skipped when a proxy is configured, since the
         # loader ignores HTTP_PROXY env vars and would just hit the cloud IP).
@@ -293,6 +316,11 @@ class TranscriptService:
             transcript_text, raw_docs, last_error = cls._fetch_via_langchain(youtube_url)
             if transcript_text and raw_docs and raw_docs[0].metadata and 'title' in raw_docs[0].metadata:
                 video_title = raw_docs[0].metadata['title'] or video_title
+            if last_error and any(
+                tok in last_error.lower()
+                for tok in ('ipblocked', 'requestblocked', 'blocked', 'bot')
+            ):
+                ip_blocked_seen = True
 
         # 3. youtube-transcript-api direct (with proxy if configured).
         if not transcript_text.strip():
@@ -302,6 +330,11 @@ class TranscriptService:
                 )
                 if err:
                     last_error = err
+                    if err == 'ip_blocked' or any(
+                        tok in err.lower()
+                        for tok in ('ipblocked', 'requestblocked', 'blocked', 'bot')
+                    ):
+                        ip_blocked_seen = True
             except TranscriptsDisabled:
                 return {
                     'success': False,
@@ -326,24 +359,24 @@ class TranscriptService:
             text, err = cls._fetch_via_third_party(video_id)
             if text:
                 transcript_text = text
-                # If we got the transcript from the third party, the YouTube IP
-                # block is the most likely reason; annotate the error for logging.
                 last_error = "thirdparty_recovered_after_ip_block"
-            elif err:
+            elif err and err != 'thirdparty_disabled':
+                # Don't overwrite the upstream IP-block evidence with a
+                # downstream "provider disabled" marker.
                 last_error = err
 
         cleaned_transcript = cls.clean_text(transcript_text)
         if not cleaned_transcript:
-            if last_error == "ip_blocked" or (last_error and any(
-                tok in last_error.lower() for tok in ("ipblocked", "requestblocked", "blocked", "bot")
-            )):
+            if ip_blocked_seen:
                 return {
                     'success': False,
                     'video_id': video_id,
                     'error': (
-                        "YouTube blocked automatic transcript extraction from this server IP "
-                        "and the third-party fallback also failed. Configure YOUTUBE_PROXY in "
-                        "your environment, or paste the transcript text in the 'Manual "
+                        "YouTube blocked this server's IP from downloading transcripts "
+                        "(this happens on Vercel / Lambda / most cloud hosts). "
+                        "Fix by setting YOUTUBE_PROXY in your environment to a "
+                        "residential proxy URL — Webshare offers 10 free proxies. "
+                        "Alternatively, paste the transcript text in the 'Manual "
                         "Transcript' box below to proceed."
                     )
                 }
@@ -351,7 +384,10 @@ class TranscriptService:
                 return {
                     'success': False,
                     'video_id': video_id,
-                    'error': f"Could not retrieve video transcript ({last_error}). Please paste the transcript text in the 'Manual Transcript' box below!"
+                    'error': (
+                        "Could not retrieve the transcript automatically. Please paste "
+                        "the transcript text in the 'Manual Transcript' box below."
+                    )
                 }
             return {
                 'success': False,
