@@ -2,6 +2,7 @@
 Verification suite for the YouTube Learning Assistant MVP.
 Tests URL parsing, text cleaning, database CRUD, ChromaDB operations, and Flask routes.
 """
+import os
 import unittest
 from app import create_app
 from models.database import db, Video, Notes, Flashcard, ChatMessage
@@ -308,6 +309,70 @@ class TestYouTubeLearningAssistant(unittest.TestCase):
         )
         self.assertTrue(res['success'])
         self.assertIn("manually pasted transcript", res['transcript'])
+
+    def test_third_party_fallback_returns_clean_text(self):
+        """When direct API is IP-blocked, the third-party provider must be tried
+        and its payload cleaned into a single concatenated string."""
+        import unittest.mock as mock
+
+        fake_payload = {
+            "items": [
+                {
+                    "id": "dQw4w9WgXcQ",
+                    "transcript": {
+                        "items": [
+                            {"text": "We're no strangers to love"},
+                            {"text": "You know the rules and so do I"},
+                            {"text": ""},
+                        ]
+                    }
+                }
+            ]
+        }
+
+        with mock.patch.object(TranscriptService, '_fetch_via_youtube_transcript_api',
+                               return_value=("", "ip_blocked")):
+            with mock.patch('services.transcript_service.requests.get') as get_mock:
+                get_mock.return_value.status_code = 200
+                get_mock.return_value.json.return_value = fake_payload
+                # Make sure no proxy is set so the LangChain path runs (and gets
+                # blocked), then the direct API is mocked blocked, then third-party.
+                env = {k: v for k, v in os.environ.items()
+                       if k not in ('YOUTUBE_PROXY', 'HTTP_PROXY', 'HTTPS_PROXY')}
+                with mock.patch.dict(os.environ, env, clear=True):
+                    res = TranscriptService.extract_transcript(
+                        youtube_url='https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                        manual_transcript=None,
+                    )
+
+        self.assertTrue(res['success'])
+        self.assertIn("We're no strangers to love", res['transcript'])
+        self.assertIn("so do I", res['transcript'])
+
+    def test_proxy_config_skips_langchain_loader(self):
+        """When YOUTUBE_PROXY is set, the LangChain loader must be skipped
+        (it does not honor HTTP proxies). The proxy URL must be passed to
+        the direct youtube-transcript-api call."""
+        import unittest.mock as mock
+
+        with mock.patch.object(TranscriptService, '_fetch_via_langchain') as lc_mock:
+            with mock.patch.object(TranscriptService, '_fetch_via_youtube_transcript_api',
+                                   return_value=("hello from direct API", None)) as direct_mock:
+                with mock.patch.object(TranscriptService, '_fetch_via_third_party',
+                                       return_value=("", None)) as third_mock:
+                    with mock.patch.dict(os.environ, {'YOUTUBE_PROXY': 'http://proxy.example:8080'}):
+                        res = TranscriptService.extract_transcript(
+                            youtube_url='https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                            manual_transcript=None,
+                        )
+
+        lc_mock.assert_not_called()
+        direct_mock.assert_called_once()
+        self.assertEqual(direct_mock.call_args[0][0], 'dQw4w9WgXcQ')
+        self.assertEqual(direct_mock.call_args[0][1], 'http://proxy.example:8080')
+        third_mock.assert_not_called()
+        self.assertTrue(res['success'])
+        self.assertEqual(res['transcript'], 'hello from direct API')
 
 if __name__ == '__main__':
     unittest.main()
