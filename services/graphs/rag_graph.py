@@ -103,15 +103,15 @@ def check_relevance_node(state: RAGState) -> Dict[str, Any]:
     return {'is_relevant': is_relevant}
 
 def generate_answer_node(state: RAGState) -> Dict[str, Any]:
-    """LangGraph node: Generate grounded answer using LangChain Chat Model."""
+    """LangGraph node: Generate grounded answer using LangChain Chat Model.
+
+    Tries the configured LLM_PROVIDER first and falls back to any other
+    configured providers on transient failures (429 / 5xx / timeout).
+    """
     title = state.get('video_title', 'Video')
     question = state.get('question', '')
     context_text = state.get('context_text', '')
     chat_history = state.get('chat_history', [])
-
-    llm = Config.get_chat_model(temperature=0.2, max_tokens=600)
-    if not llm:
-        return {'answer': 'AI provider is not configured.', 'error': 'LLM not initialized'}
 
     system_instruction = (
         f"You are a dedicated AI study tutor for the video titled: '{title}'.\n\n"
@@ -150,11 +150,19 @@ def generate_answer_node(state: RAGState) -> Dict[str, Any]:
     messages.append(HumanMessage(content=user_content))
 
     try:
-        response = llm.invoke(messages)
+        response = Config.invoke_with_fallback(
+            messages, temperature=0.2, max_tokens=600
+        )
         answer = response.content if hasattr(response, 'content') else str(response)
         return {'answer': answer.strip(), 'error': None}
     except Exception as e:
-        return {'answer': f"AI processing error: {str(e)}", 'error': str(e)}
+        # Friendly fallback message — don't leak the raw provider error to the
+        # user. The full error is logged server-side via invoke_with_fallback.
+        friendly = (
+            "The AI tutor is temporarily unavailable — every configured provider "
+            "is rate-limited or offline. Please try again in a minute."
+        )
+        return {'answer': friendly, 'error': str(e)}
 
 def fallback_node(state: RAGState) -> Dict[str, Any]:
     """LangGraph fallback node when no transcript context is available."""

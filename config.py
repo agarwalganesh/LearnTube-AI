@@ -147,3 +147,137 @@ class Config:
             )
 
         return None
+
+    # ------------------------------------------------------------------ #
+    # Cross-provider runtime fallback. When the configured primary hits a
+    # 429 / 5xx, automatically try the next configured provider so a single
+    # rate-limited key doesn't break the whole app.
+    # ------------------------------------------------------------------ #
+
+    @classmethod
+    def get_chat_model_chain(cls, temperature: float = 0.2, max_tokens: int = None):
+        """Returns an ordered list of (provider_name, ChatOpenAI) instances.
+
+        The configured LLM_PROVIDER comes first; any other configured
+        providers follow in a stable order (Groq, OpenAI, Gemini) so the
+        most generous free tier (Groq) is usually reached even if the
+        primary is exhausted.
+        """
+        from langchain_openai import ChatOpenAI
+
+        chain = []
+        seen_providers = set()
+
+        def _groq():
+            if not (cls.GROQ_API_KEY and not cls.GROQ_API_KEY.startswith('your_')):
+                return None
+            kwargs = {
+                'api_key': cls.GROQ_API_KEY,
+                'base_url': cls.GROQ_BASE_URL or 'https://api.groq.com/openai/v1',
+                'model': (cls.GROQ_MODEL or 'groq/compound-mini').strip(),
+                'temperature': temperature,
+                'max_retries': 1,
+                'timeout': 30,
+            }
+            if max_tokens:
+                kwargs['max_tokens'] = max_tokens
+            return ChatOpenAI(**kwargs)
+
+        def _openai():
+            if not (cls.OPENAI_API_KEY and not cls.OPENAI_API_KEY.startswith('your_')):
+                return None
+            kwargs = {
+                'api_key': cls.OPENAI_API_KEY,
+                'model': (cls.OPENAI_MODEL or 'gpt-4o-mini').strip(),
+                'temperature': temperature,
+                'max_retries': 1,
+                'timeout': 30,
+            }
+            if max_tokens:
+                kwargs['max_tokens'] = max_tokens
+            return ChatOpenAI(**kwargs)
+
+        def _gemini():
+            if not (cls.GEMINI_API_KEY and not cls.GEMINI_API_KEY.startswith('your_')):
+                return None
+            kwargs = {
+                'api_key': cls.GEMINI_API_KEY,
+                'base_url': cls.GEMINI_BASE_URL or 'https://generativelanguage.googleapis.com/v1beta/openai/',
+                'model': (cls.GEMINI_MODEL or 'gemini-3.6-flash').strip(),
+                'temperature': temperature,
+                'max_retries': 1,
+                'timeout': 30,
+            }
+            if max_tokens:
+                kwargs['max_tokens'] = max_tokens
+            return ChatOpenAI(**kwargs)
+
+        builders = {'groq': _groq, 'openai': _openai, 'gemini': _gemini}
+
+        # Primary first
+        primary = (cls.LLM_PROVIDER or 'groq').lower()
+        if primary in builders:
+            llm = builders[primary]()
+            if llm is not None:
+                chain.append((primary, llm))
+                seen_providers.add(primary)
+
+        # Then the rest in a stable order (Groq is the most generous free tier,
+        # so we put it ahead of OpenAI/Gemini in the fallback chain).
+        for name in ('groq', 'openai', 'gemini'):
+            if name in seen_providers:
+                continue
+            llm = builders[name]()
+            if llm is not None:
+                chain.append((name, llm))
+                seen_providers.add(name)
+
+        return chain
+
+    @staticmethod
+    def _is_transient_error(err: Exception) -> bool:
+        """True if the exception looks like a rate limit / transient provider issue."""
+        msg = (str(err) or '').lower()
+        if not msg:
+            return False
+        transient_markers = (
+            '429', 'rate', 'quota', 'limit', '503', '502', '504', '500',
+            'unavailable', 'overloaded', 'timeout', 'timed out', 'busy',
+        )
+        return any(m in msg for m in transient_markers)
+
+    @classmethod
+    def invoke_with_fallback(
+        cls, messages, temperature: float = 0.2, max_tokens: int = None,
+        return_provider: bool = False,
+    ):
+        """Invoke `messages` against the fallback chain.
+
+        Returns the AIMessage (or whatever the LLM returns) on success.
+        Raises the last exception if every provider fails. Each transient
+        failure moves to the next provider; non-transient failures
+        (auth error, bad prompt, etc.) raise immediately.
+        """
+        chain = cls.get_chat_model_chain(temperature=temperature, max_tokens=max_tokens)
+        if not chain:
+            raise RuntimeError("No AI provider is configured. Set GROQ_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY.")
+
+        last_error = None
+        for provider_name, llm in chain:
+            try:
+                response = llm.invoke(messages)
+                if return_provider:
+                    return response, provider_name
+                return response
+            except Exception as e:
+                last_error = e
+                print(f"[LLM] {provider_name} failed: {str(e)[:300]}")
+                if not cls._is_transient_error(e):
+                    # Auth error, invalid key, malformed prompt — don't waste
+                    # time trying other providers.
+                    raise
+                # else: fall through to next provider
+
+        # All providers hit a transient failure. Surface the last one.
+        assert last_error is not None
+        raise last_error

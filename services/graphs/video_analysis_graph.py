@@ -77,7 +77,11 @@ def _extract_json_object(raw_text: str) -> Dict[str, Any]:
     raise ValueError("Unbalanced JSON braces in LLM response")
 
 def generate_notes_node(state: VideoAnalysisState) -> Dict[str, Any]:
-    """LangGraph node: Extract structured study notes using LangChain."""
+    """LangGraph node: Extract structured study notes using LangChain.
+
+    Uses the configured primary LLM first, then falls back to any other
+    configured providers on transient failures (429 / 5xx / timeout).
+    """
     title = state.get('title', 'Educational Video')
     transcript = state.get('transcript', '')
 
@@ -89,7 +93,7 @@ def generate_notes_node(state: VideoAnalysisState) -> Dict[str, Any]:
     if not llm:
         return {'error': 'AI provider not configured. Please check your API keys.', 'status': 'failed'}
 
-    # 1. Try native with_structured_output
+    # 1. Try native with_structured_output (primary provider only — fastest path).
     try:
         structured_llm = llm.with_structured_output(NotesSchema)
         prompt = (
@@ -110,9 +114,11 @@ def generate_notes_node(state: VideoAnalysisState) -> Dict[str, Any]:
                 'status': 'notes_generated'
             }
     except Exception as se:
-        print(f"[VideoAnalysisGraph] Native structured_output fallback triggered: {se}")
+        print(f"[VideoAnalysisGraph] Native structured_output fallback triggered: {str(se)[:200]}")
 
-    # 2. Resilient fallback with JSON instruction + Pydantic validation
+    # 2. Resilient fallback: use the cross-provider fallback chain and parse
+    # JSON from the response. This recovers when the primary provider is
+    # rate-limited (e.g. Gemini free tier 429).
     system_prompt = (
         "You are an expert academic tutor. Extract structured study notes strictly from the video transcript.\n"
         "Return ONLY a valid JSON object matching this schema:\n"
@@ -128,7 +134,10 @@ def generate_notes_node(state: VideoAnalysisState) -> Dict[str, Any]:
     user_prompt = f"Video Title: {title}\n\nTranscript:\n{trimmed}"
 
     try:
-        response = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
+        response = Config.invoke_with_fallback(
+            [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)],
+            temperature=0.2,
+        )
         raw_text = response.content if hasattr(response, 'content') else str(response)
 
         parsed = _extract_json_object(raw_text)
@@ -139,12 +148,16 @@ def generate_notes_node(state: VideoAnalysisState) -> Dict[str, Any]:
         }
     except Exception as e:
         return {
-            'error': f"Failed to generate structured notes: {str(e)}",
+            'error': "AI provider is temporarily unavailable. Please try again in a minute.",
             'status': 'notes_failed'
         }
 
 def generate_flashcards_node(state: VideoAnalysisState) -> Dict[str, Any]:
-    """LangGraph node: Generate high-yield revision flashcards using LangChain."""
+    """LangGraph node: Generate high-yield revision flashcards using LangChain.
+
+    Uses the configured primary LLM first, then falls back to any other
+    configured providers on transient failures (429 / 5xx / timeout).
+    """
     title = state.get('title', 'Educational Video')
     transcript = state.get('transcript', '')
     count = state.get('count', 8)
@@ -161,7 +174,7 @@ def generate_flashcards_node(state: VideoAnalysisState) -> Dict[str, Any]:
     if not llm:
         return {'error': 'AI provider not configured.', 'status': 'failed'}
 
-    # 1. Try native with_structured_output
+    # 1. Try native with_structured_output (primary provider only — fastest path).
     try:
         structured_llm = llm.with_structured_output(FlashcardsSchema)
         prompt = (
@@ -179,9 +192,9 @@ def generate_flashcards_node(state: VideoAnalysisState) -> Dict[str, Any]:
             cards = [c.model_dump() for c in validated.flashcards]
             return {'flashcards': cards, 'status': 'completed'}
     except Exception as se:
-        print(f"[VideoAnalysisGraph] Flashcard structured output fallback triggered: {se}")
+        print(f"[VideoAnalysisGraph] Flashcard structured output fallback triggered: {str(se)[:200]}")
 
-    # 2. Resilient fallback with JSON instruction + Pydantic validation
+    # 2. Resilient fallback via cross-provider chain + JSON parse.
     system_prompt = (
         "You are an expert exam preparation educator. Create concise study flashcards based on the material.\n"
         "Return ONLY a valid JSON object matching:\n"
@@ -190,7 +203,10 @@ def generate_flashcards_node(state: VideoAnalysisState) -> Dict[str, Any]:
     user_prompt = f"Video Title: {title}\n\n{notes_context}\nTranscript:\n{trimmed}\n\nCreate {count} flashcards."
 
     try:
-        response = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
+        response = Config.invoke_with_fallback(
+            [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)],
+            temperature=0.3,
+        )
         raw_text = response.content if hasattr(response, 'content') else str(response)
 
         parsed = _extract_json_object(raw_text)
@@ -198,7 +214,11 @@ def generate_flashcards_node(state: VideoAnalysisState) -> Dict[str, Any]:
         cards = [c.model_dump() for c in validated.flashcards]
         return {'flashcards': cards, 'status': 'completed'}
     except Exception as e:
-        return {'flashcards': [], 'error': f"Failed to generate flashcards: {str(e)}", 'status': 'flashcards_failed'}
+        return {
+            'flashcards': [],
+            'error': "AI provider is temporarily unavailable. Please try again in a minute.",
+            'status': 'flashcards_failed'
+        }
 
 def run_notes_generation(title: str, transcript: str) -> Dict[str, Any]:
     """Run single-node notes generation."""
