@@ -8,9 +8,19 @@ def create_app(config_class=Config):
     """Application factory for the YouTube Learning Assistant."""
     app = Flask(__name__)
     app.config.from_object(config_class)
-    
-    # Ensure secret_key is never empty for session/flash
-    secret = app.config.get('SECRET_KEY') or 'dev-secret-key-youtube-learning-assistant-2026-safe'
+
+    # Ensure secret_key is never empty for session/flash.
+    # In production, fail closed rather than silently using a known default.
+    secret = app.config.get('SECRET_KEY')
+    if not secret:
+        is_dev = app.config.get('DEBUG') or os.getenv('FLASK_ENV', '').lower() == 'development'
+        if is_dev:
+            secret = 'dev-secret-key-youtube-learning-assistant-2026-safe'
+        else:
+            raise RuntimeError(
+                "SECRET_KEY is not set. Define it in your environment or .env file "
+                "before running in production."
+            )
     app.config['SECRET_KEY'] = secret
     app.secret_key = secret
 
@@ -45,16 +55,6 @@ def create_app(config_class=Config):
     app.register_blueprint(flashcard_bp)
     app.register_blueprint(search_bp)
 
-    # Ensure database is ready on every worker cold start
-    @app.before_request
-    def ensure_db_ready():
-        if not getattr(app, '_db_ready', False):
-            try:
-                db.create_all()
-                app._db_ready = True
-            except Exception:
-                pass
-
     # Context processors for templates
     @app.context_processor
     def inject_globals():
@@ -79,6 +79,7 @@ def create_app(config_class=Config):
     # Ensure database tables exist
     with app.app_context():
         db.create_all()
+        app._db_ready = True
 
     return app
 

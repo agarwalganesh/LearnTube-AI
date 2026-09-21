@@ -40,7 +40,12 @@ def generate_flashcards(video_id):
         flash(msg, 'danger')
         return redirect(url_for('flashcards.view_flashcards', video_id=video_id))
 
-    count = int(request.form.get('count', 8))
+    try:
+        raw_count = int(request.form.get('count', 8))
+    except (TypeError, ValueError):
+        raw_count = 8
+    # Clamp to a sensible range so a malformed form can't request a million cards.
+    count = max(1, min(50, raw_count))
     result = FlashcardService.generate_flashcards_for_video(video_id, count=count)
     
     if not result['success']:

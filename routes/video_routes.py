@@ -1,10 +1,10 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
+from sqlalchemy import func
 from config import Config
 from models.database import db, Video, Notes, Flashcard
 from services.youtube_service import YouTubeService
 from services.transcript_service import TranscriptService
 from services.chroma_service import ChromaService
-from services.llm_service import LLMService
 
 video_bp = Blueprint('video', __name__)
 
@@ -24,14 +24,29 @@ def index():
 
 @video_bp.route('/video/analyze', methods=['POST'])
 def analyze_video():
-    """Process a YouTube URL, extract transcript, index into ChromaDB, and save to SQLite."""
+    """Process a YouTube URL, extract transcript, index into ChromaDB, and save to SQLite.
+
+    Notes on LLM generation: Smart Notes generation is intentionally NOT triggered
+    here. On Vercel/Lambda the request budget is ~10s and an LLM call blows past
+    that, leaving the user with a half-saved video. The Notes page exposes a
+    dedicated "Generate Smart Notes" button which calls /notes/generate on demand.
+    """
     try:
         youtube_url = request.form.get('youtube_url', '').strip()
-        course_name = request.form.get('course_name', '').strip() or 'General'
+        course_name_raw = request.form.get('course_name', '').strip()
+        course_name = course_name_raw[:100] or 'General'
         manual_transcript = request.form.get('manual_transcript', '').strip()
 
         if not youtube_url:
             flash('Please enter a valid YouTube video URL.', 'danger')
+            return redirect(url_for('video.index'))
+
+        # Per-field length limits — protects against OOM on huge manual transcripts.
+        if len(youtube_url) > 500:
+            flash('YouTube URL is too long.', 'danger')
+            return redirect(url_for('video.index'))
+        if manual_transcript and len(manual_transcript) > 500_000:
+            flash('Manual transcript is too large (limit 500,000 chars).', 'danger')
             return redirect(url_for('video.index'))
 
         # Validate URL
@@ -88,36 +103,22 @@ def analyze_video():
                     course_name=new_video.course_name,
                     transcript=new_video.transcript
                 )
-                if chroma_res['success']:
+                if chroma_res.get('success'):
                     count = chroma_res.get("chunk_count", 0)
-                    if count > 0:
+                    if chroma_res.get('skipped_reason') == 'serverless_vector_disabled':
+                        flash(
+                            'Video saved. Vector search is disabled on this serverless '
+                            'deployment — chat and search will use keyword matching.',
+                            'info'
+                        )
+                    elif count > 0:
                         flash(f'Successfully analyzed and indexed {count} chunks in vector store!', 'success')
                     else:
-                        flash('Successfully analyzed video and prepared transcript for instant AI study!', 'success')
+                        flash('Video saved. Use "Generate Smart Notes" to create study material.', 'success')
                 else:
                     flash(f'Video saved, but ChromaDB indexing had an issue: {chroma_res.get("error")}', 'warning')
             except Exception as ce:
                 flash(f'Video saved, but vector indexing was skipped: {str(ce)}', 'warning')
-
-            # Automatically attempt Smart Notes generation
-            try:
-                notes_res = LLMService.generate_smart_notes(new_video.title, new_video.transcript)
-                if notes_res['success']:
-                    data = notes_res['data']
-                    notes_record = Notes(
-                        video_id=new_video.id,
-                        summary=data['summary'],
-                        key_points=data['key_points'],
-                        definitions=data['definitions'],
-                        formulas=data['formulas'],
-                        examples=data['examples'],
-                        important_concepts=data['important_concepts']
-                    )
-                    db.session.add(notes_record)
-                    db.session.commit()
-                    flash('Smart Notes were automatically generated!', 'success')
-            except Exception:
-                pass
         else:
             flash('Video and transcript saved! Set your GROQ_API_KEY in .env to enable Smart Notes, Flashcards, and RAG Chat.', 'warning')
 
@@ -127,7 +128,7 @@ def analyze_video():
         db.session.rollback()
         import traceback
         traceback.print_exc()
-        flash(f'Error analyzing video: {str(e)}', 'danger')
+        flash('Error analyzing video. Please check the URL and try again.', 'danger')
         return redirect(url_for('video.index'))
 
 @video_bp.route('/video/<int:video_id>')
@@ -172,24 +173,34 @@ def delete_video(video_id):
 def dashboard():
     """Learning dashboard with statistics and organized video library."""
     course_filter = request.args.get('course')
-    
+
     query = Video.query
     if course_filter:
         query = query.filter_by(course_name=course_filter)
-        
+
     videos = query.order_by(Video.created_at.desc()).all()
-    
-    # Global metrics
+
+    # Global metrics via aggregate SQL (avoids per-row N+1 in Video.to_dict).
     total_videos = Video.query.count()
     completed_videos = Video.query.filter_by(completed=True).count()
     total_notes = Notes.query.count()
     total_flashcards = Flashcard.query.count()
-    
+
     progress_percent = int((completed_videos / total_videos * 100)) if total_videos > 0 else 0
-    
+
     # Distinct courses for filter pills
     courses = db.session.query(Video.course_name).distinct().all()
     courses_list = [c[0] for c in courses if c[0]]
+
+    # Pre-compute flashcard counts for every video in one SQL query
+    # instead of triggering N separate .count() calls in the template.
+    fc_counts = dict(
+        db.session.query(Flashcard.video_id, func.count(Flashcard.id))
+        .group_by(Flashcard.video_id)
+        .all()
+    )
+    for v in videos:
+        v.flashcard_count = fc_counts.get(v.id, 0)
 
     return render_template(
         'dashboard.html',

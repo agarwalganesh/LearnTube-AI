@@ -185,12 +185,120 @@ class TestYouTubeLearningAssistant(unittest.TestCase):
         self.assertEqual(fcs.flashcards[0].question, "What is a derivative?")
 
     def test_langgraph_compilation(self):
-        """Test that VideoAnalysisGraph and RAGGraph compile properly."""
-        from services.graphs.video_analysis_graph import video_analysis_graph
+        """Test that RAGGraph compiles properly (VideoAnalysisState notes/flashcards
+        are run as single-node entrypoints; the multi-node graph was removed as dead)."""
         from services.graphs.rag_graph import rag_graph
 
-        self.assertIsNotNone(video_analysis_graph)
         self.assertIsNotNone(rag_graph)
+
+    def test_json_extraction_handles_nested_objects(self):
+        """The robust JSON extractor must respect nested braces, not stop at the
+        first closing brace it sees (the old regex truncation bug)."""
+        from services.graphs.video_analysis_graph import _extract_json_object
+
+        raw = (
+            'Here is your JSON:\n'
+            '```json\n'
+            '{"summary": "OK", "key_points": ["a", "b"], '
+            '"definitions": [{"term": "T", "definition": "D"}], '
+            '"formulas": [], "examples": [], "important_concepts": []}\n'
+            '```'
+        )
+        parsed = _extract_json_object(raw)
+        self.assertEqual(parsed['summary'], 'OK')
+        self.assertEqual(parsed['definitions'][0]['term'], 'T')
+
+        # Strings containing braces must not confuse the parser.
+        raw_with_braces_in_string = (
+            '{"summary": "We use {curly} braces sometimes", "key_points": []}'
+        )
+        parsed2 = _extract_json_object(raw_with_braces_in_string)
+        self.assertIn('{curly}', parsed2['summary'])
+
+    def test_transcript_helper_normalizes_shapes(self):
+        """TranscriptService._join_fetched handles both modern and legacy API shapes."""
+        from services.transcript_service import TranscriptService
+
+        # Legacy snippet list
+        legacy = [{'text': 'Hello'}, {'text': 'world'}, {'text': ''}]
+        self.assertEqual(TranscriptService._join_fetched(legacy), 'Hello world')
+
+        # Modern FetchedTranscript-like object with to_raw_data
+        class Modern:
+            def to_raw_data(self):
+                return [{'text': 'foo'}, {'text': 'bar'}]
+
+        self.assertEqual(TranscriptService._join_fetched(Modern()), 'foo bar')
+
+        self.assertEqual(TranscriptService._join_fetched(None), '')
+
+    def test_input_length_limits(self):
+        """Routes must reject oversized inputs to avoid OOM / token-burn."""
+        huge_url = 'https://www.youtube.com/watch?v=' + ('A' * 600)
+        res = self.client.post('/video/analyze', data={'youtube_url': huge_url}, follow_redirects=True)
+        self.assertEqual(res.status_code, 200)
+        self.assertIn(b'too long', res.data)
+
+    def test_flashcard_count_is_clamped(self):
+        """flashcard generate endpoint must clamp count to [1, 50]."""
+        with self.app.app_context():
+            v = Video(
+                youtube_url='https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                youtube_video_id='dQw4w9WgXcQ',
+                title='T', transcript='t', course_name='c'
+            )
+            db.session.add(v)
+            db.session.commit()
+            vid_id = v.id
+
+        # Non-numeric must not crash.
+        res = self.client.post(
+            f'/video/{vid_id}/flashcards/generate',
+            data={'count': 'abc'},
+            follow_redirects=True,
+        )
+        self.assertEqual(res.status_code, 200)
+
+    def test_chat_clear_requires_existing_video(self):
+        """chat clear endpoint must report not-found instead of silently 200."""
+        res = self.client.post('/api/chat/999999/clear')
+        self.assertEqual(res.status_code, 404)
+        self.assertEqual(res.get_json()['success'], False)
+
+    def test_chat_question_length_limit(self):
+        """Oversized chat questions must be rejected to protect the LLM budget."""
+        with self.app.app_context():
+            v = Video(
+                youtube_url='https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                youtube_video_id='dQw4w9WgXcQ',
+                title='T', transcript='t', course_name='c'
+            )
+            db.session.add(v)
+            db.session.commit()
+            vid_id = v.id
+
+        res = self.client.post(
+            f'/api/chat/{vid_id}',
+            json={'question': 'x' * 2000},
+        )
+        self.assertEqual(res.status_code, 400)
+
+    def test_app_factory_fails_closed_on_missing_secret_in_production(self):
+        """SECRET_KEY must be required when not in development mode."""
+        import os
+        saved = os.environ.pop('SECRET_KEY', None)
+        os.environ['FLASK_ENV'] = 'production'
+        try:
+            cfg = type('C', (Config,), {'SECRET_KEY': ''})  # no key
+            try:
+                create_app(cfg)
+                self.fail("Expected RuntimeError for missing SECRET_KEY in production")
+            except RuntimeError as e:
+                self.assertIn('SECRET_KEY', str(e))
+        finally:
+            if saved is not None:
+                os.environ['SECRET_KEY'] = saved
+            os.environ.pop('FLASK_ENV', None)
 
     def test_manual_transcript_fallback(self):
         """Test that manual transcript bypasses YouTube API when cloud IP is blocked."""

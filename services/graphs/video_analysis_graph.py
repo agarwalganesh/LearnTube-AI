@@ -21,13 +21,60 @@ def _trim_transcript(transcript: str, max_chars: int = 7000) -> str:
         return ""
     if len(transcript) <= max_chars:
         return transcript
-    
+
     part_len = max_chars // 3
     part1 = transcript[:part_len]
     mid = len(transcript) // 2
     part2 = transcript[mid - (part_len // 2) : mid + (part_len // 2)]
     part3 = transcript[-part_len:]
     return f"{part1}\n\n[... transcript excerpt ...]\n\n{part2}\n\n[... transcript excerpt ...]\n\n{part3}"
+
+
+def _extract_json_object(raw_text: str) -> Dict[str, Any]:
+    """Extract the first balanced JSON object from a possibly-wrapped LLM response.
+
+    Replaces the previous `re.search(r'(\\{[\\s\\S]*\\})', ...)` which stops at the
+    first `}` it sees and truncates nested objects. This implementation walks the
+    string and respects quoted strings and braces.
+    """
+    if not raw_text:
+        raise ValueError("Empty LLM response")
+
+    text = raw_text.strip()
+
+    # Strip optional ```json ... ``` fences.
+    fence = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+    if fence:
+        text = fence.group(1).strip()
+
+    # Find the first '{' and walk to find its matching '}'.
+    start = text.find("{")
+    if start == -1:
+        raise ValueError("No JSON object found in LLM response")
+
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+        else:
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = text[start:i + 1]
+                    return json.loads(candidate, strict=False)
+    raise ValueError("Unbalanced JSON braces in LLM response")
 
 def generate_notes_node(state: VideoAnalysisState) -> Dict[str, Any]:
     """LangGraph node: Extract structured study notes using LangChain."""
@@ -83,15 +130,8 @@ def generate_notes_node(state: VideoAnalysisState) -> Dict[str, Any]:
     try:
         response = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
         raw_text = response.content if hasattr(response, 'content') else str(response)
-        
-        # Clean potential markdown fences
-        fence_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', raw_text)
-        json_str = fence_match.group(1).strip() if fence_match else raw_text.strip()
-        obj_match = re.search(r'(\{[\s\S]*\})', json_str)
-        if obj_match:
-            json_str = obj_match.group(1).strip()
 
-        parsed = json.loads(json_str, strict=False)
+        parsed = _extract_json_object(raw_text)
         validated = NotesSchema.model_validate(parsed)
         return {
             'notes': validated.model_dump(),
@@ -153,48 +193,12 @@ def generate_flashcards_node(state: VideoAnalysisState) -> Dict[str, Any]:
         response = llm.invoke([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
         raw_text = response.content if hasattr(response, 'content') else str(response)
 
-        fence_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', raw_text)
-        json_str = fence_match.group(1).strip() if fence_match else raw_text.strip()
-        obj_match = re.search(r'(\{[\s\S]*\})', json_str)
-        if obj_match:
-            json_str = obj_match.group(1).strip()
-
-        parsed = json.loads(json_str, strict=False)
+        parsed = _extract_json_object(raw_text)
         validated = FlashcardsSchema.model_validate(parsed)
         cards = [c.model_dump() for c in validated.flashcards]
         return {'flashcards': cards, 'status': 'completed'}
     except Exception as e:
         return {'flashcards': [], 'error': f"Failed to generate flashcards: {str(e)}", 'status': 'flashcards_failed'}
-
-def build_video_analysis_graph():
-    """Build and compile the LangGraph StateGraph for video processing."""
-    builder = StateGraph(VideoAnalysisState)
-    builder.add_node("generate_notes", generate_notes_node)
-    builder.add_node("generate_flashcards", generate_flashcards_node)
-
-    builder.add_edge(START, "generate_notes")
-    builder.add_edge("generate_notes", "generate_flashcards")
-    builder.add_edge("generate_flashcards", END)
-
-    return builder.compile()
-
-# Singleton compiled graph
-video_analysis_graph = build_video_analysis_graph()
-
-def run_video_analysis(title: str, transcript: str, count: int = 8) -> Dict[str, Any]:
-    """Execute complete analysis workflow via LangGraph."""
-    initial_state: VideoAnalysisState = {
-        'title': title,
-        'transcript': transcript,
-        'count': count
-    }
-    final_state = video_analysis_graph.invoke(initial_state)
-    return {
-        'success': bool(final_state.get('notes') or final_state.get('flashcards')),
-        'notes': final_state.get('notes'),
-        'flashcards': final_state.get('flashcards', []),
-        'error': final_state.get('error')
-    }
 
 def run_notes_generation(title: str, transcript: str) -> Dict[str, Any]:
     """Run single-node notes generation."""

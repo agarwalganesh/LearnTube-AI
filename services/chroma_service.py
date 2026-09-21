@@ -53,8 +53,14 @@ class ChromaService:
         try:
             if Config.IS_VERCEL:
                 # On serverless (Vercel), storage is ephemeral and downloading 80MB ONNX
-                # models exceeds Lambda execution timeouts. Safe skip.
-                return {'success': True, 'chunk_count': 0, 'error': None}
+                # models exceeds Lambda execution timeouts. Safe skip; UI must surface
+                # this to the user instead of pretending chunks were indexed.
+                return {
+                    'success': True,
+                    'chunk_count': 0,
+                    'skipped_reason': 'serverless_vector_disabled',
+                    'error': None
+                }
 
             if not transcript or not transcript.strip():
                 return {'success': False, 'chunk_count': 0, 'error': 'Transcript is empty'}
@@ -184,7 +190,8 @@ class ChromaService:
 
             return formatted_results
 
-        except Exception:
+        except Exception as e:
+            print(f"[ChromaService] similarity_search failed: {e}")
             return []
 
     @classmethod
@@ -194,7 +201,8 @@ class ChromaService:
             collection = cls.get_collection()
             collection.delete(where={"video_id": int(video_id)})
             return True
-        except Exception:
+        except Exception as e:
+            print(f"[ChromaService] delete_video_chunks({video_id}) failed: {e}")
             return False
 
     @classmethod

@@ -29,7 +29,11 @@ class Config:
         CHROMA_PERSIST_DIR = os.getenv('CHROMA_PERSIST_DIR', str(BASE_DIR / 'chroma_db'))
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    
+
+    # Reject oversized request bodies early so a paste-bomb transcript or chat
+    # question can't tie up a worker or burn through LLM context.
+    MAX_CONTENT_LENGTH = 2 * 1024 * 1024  # 2 MB
+
     # LLM Provider ('groq', 'openai', or 'gemini')
     LLM_PROVIDER = os.getenv('LLM_PROVIDER', 'groq').lower()
     

@@ -13,7 +13,14 @@ def chat_view(video_id):
     if not video:
         flash(f'Video #{video_id} was not found. Please select a video from your library.', 'warning')
         return redirect(url_for('video.index'))
-    history = ChatMessage.query.filter_by(video_id=video_id).order_by(ChatMessage.created_at.asc()).all()
+    history = (
+        ChatMessage.query
+        .filter_by(video_id=video_id)
+        .order_by(ChatMessage.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    history.reverse()
     return render_template(
         'chat.html',
         video=video,
@@ -38,6 +45,13 @@ def chat_api(video_id):
         if not question:
             return jsonify({'success': False, 'error': 'Please enter a question.'}), 400
 
+        # Bound question length to avoid burning tokens on accidental paste-bombs.
+        if len(question) > 1000:
+            return jsonify({
+                'success': False,
+                'error': 'Question is too long (limit 1000 characters).'
+            }), 400
+
         if not Config.is_ai_configured():
             return jsonify({
                 'success': False,
@@ -49,16 +63,19 @@ def chat_api(video_id):
     except Exception as e:
         return jsonify({
             'success': False,
-            'error': f'Server error processing question: {str(e)}'
+            'error': 'Server error processing question. Please try again.'
         }), 500
 
 @chatbot_bp.route('/api/chat/<int:video_id>/clear', methods=['POST'])
 def clear_chat(video_id):
     """Clear chat history for a video."""
     try:
-        ChatMessage.query.filter_by(video_id=video_id).delete()
+        video = db.session.get(Video, video_id)
+        if not video:
+            return jsonify({'success': False, 'error': f'Video #{video_id} not found.'}), 404
+        deleted = ChatMessage.query.filter_by(video_id=video_id).delete()
         db.session.commit()
-        return jsonify({'success': True, 'message': 'Chat history cleared.'})
+        return jsonify({'success': True, 'message': f'Cleared {deleted} messages.', 'deleted_count': deleted})
     except Exception as e:
         db.session.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Failed to clear chat history.'}), 500

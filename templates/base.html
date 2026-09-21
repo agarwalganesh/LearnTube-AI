@@ -55,7 +55,7 @@
                 <div class="d-flex align-items-center gap-2">
                     {% if openai_configured %}
                         <span class="badge bg-success-subtle text-success border border-success-subtle d-flex align-items-center gap-1 px-2 py-1">
-                            <i class="bi bi-check-circle-fill"></i> OpenAI Connected
+                            <i class="bi bi-check-circle-fill"></i> AI Connected
                         </span>
                     {% else %}
                         <a href="#apiKeyModal" data-bs-toggle="modal" class="badge bg-warning-subtle text-warning border border-warning-subtle text-decoration-none d-flex align-items-center gap-1 px-2 py-1">
@@ -72,7 +72,7 @@
     <div class="bg-warning-subtle text-dark border-bottom border-warning py-2 text-center small">
         <div class="container">
             <i class="bi bi-info-circle-fill text-warning me-1"></i>
-            <strong>OpenAI API Key not set:</strong> You can extract and view transcripts right away. To enable <strong>Smart Notes</strong>, <strong>Flashcards</strong>, <strong>RAG Chat</strong>, and <strong>Vector Search</strong>, add your key into <code>.env</code> file.
+            <strong>AI API Key not set:</strong> You can extract and view transcripts right away. To enable <strong>Smart Notes</strong>, <strong>Flashcards</strong>, <strong>RAG Chat</strong>, and <strong>Vector Search</strong>, add your key into <code>.env</code> file.
         </div>
     </div>
     {% endif %}
@@ -122,22 +122,18 @@
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title" id="apiKeyModalLabel"><i class="bi bi-key-fill text-primary me-2"></i>Configure OpenAI API Key</h5>
+                    <h5 class="modal-title" id="apiKeyModalLabel"><i class="bi bi-key-fill text-primary me-2"></i>Configure AI Provider Key</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <p>To enable AI Smart Notes, ChromaDB Semantic Search, Flashcards, and RAG Chatbot, configure your OpenAI API Key:</p>
+                    <p>To enable AI Smart Notes, ChromaDB Semantic Search, Flashcards, and RAG Chatbot, configure your AI provider key:</p>
                     <ol class="small text-muted">
                         <li>Open the <code>.env</code> file in your project directory.</li>
-                        <li>Update the line: <br><code>OPENAI_API_KEY=sk-your-key-here</code></li>
+                        <li>Update one of: <br><code>GROQ_API_KEY=gsk-your-key-here</code> (default, free), <br><code>OPENAI_API_KEY=sk-your-key-here</code>, or <br><code>GEMINI_API_KEY=your-key-here</code></li>
                         <li>Restart your Flask application.</li>
                     </ol>
                     <div class="alert alert-light border small">
-                        <strong>Models used:</strong>
-                        <ul class="mb-0 ps-3">
-                            <li>Chat & Notes: <code>gpt-4o-mini</code></li>
-                            <li>Vector Embeddings: <code>text-embedding-3-small</code></li>
-                        </ul>
+                        <strong>Default provider:</strong> Groq (free). Swap by changing <code>LLM_PROVIDER</code> in <code>.env</code>.
                     </div>
                 </div>
                 <div class="modal-footer">

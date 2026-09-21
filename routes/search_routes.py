@@ -5,6 +5,19 @@ from models.database import Video
 
 search_bp = Blueprint('search', __name__)
 
+
+def _valid_video_ids(video_ids):
+    """Return the subset of `video_ids` that actually exist in SQLite.
+
+    Used to filter out orphaned vector chunks. Replaces the previous
+    `Video.query.all()` per-request call that loaded every row to build a Python set.
+    """
+    ids = {int(v) for v in video_ids if v is not None}
+    if not ids:
+        return set()
+    rows = Video.query.with_entities(Video.id).filter(Video.id.in_(ids)).all()
+    return {row[0] for row in rows}
+
 def _fallback_search(query: str, video_id_filter: int = None, limit: int = 6):
     """Fallback transcript search when ChromaDB is empty or bypassed on Vercel."""
     results = []
@@ -54,7 +67,7 @@ def search_page():
             results = _fallback_search(query=query, video_id_filter=video_id_filter, limit=6)
 
     # Filter out results whose video_id is not in SQLite to guarantee valid links
-    valid_ids = {v.id for v in Video.query.all()}
+    valid_ids = _valid_video_ids(r.get('video_id') for r in results)
     results = [r for r in results if r.get('video_id') in valid_ids]
 
     # List of all videos for dropdown filter
@@ -96,7 +109,7 @@ def search_api():
             limit=6
         )
 
-    valid_ids = {v.id for v in Video.query.all()}
+    valid_ids = _valid_video_ids(r.get('video_id') for r in results)
     results = [r for r in results if r.get('video_id') in valid_ids]
 
     return jsonify({'results': results, 'count': len(results)})

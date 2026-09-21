@@ -42,16 +42,34 @@ document.addEventListener('DOMContentLoaded', () => {
         return escaped;
     }
 
-    // Append a message bubble to the chat container
+    // Append a message bubble to the chat container (assistant = markdown, user = plain text)
     function appendBubble(role, content) {
         const bubble = document.createElement('div');
         bubble.className = `chat-bubble ${role === 'user' ? 'chat-bubble-user' : 'chat-bubble-assistant'}`;
-        
+
         if (role === 'user') {
             bubble.textContent = content;
         } else {
             bubble.innerHTML = formatMessage(content);
         }
+
+        chatMessages.appendChild(bubble);
+        scrollToBottom();
+    }
+
+    // Safe error/status bubble. Builds DOM nodes directly so server-supplied
+    // error text can never be interpreted as HTML.
+    function appendErrorBubble(message, offline = false) {
+        const bubble = document.createElement('div');
+        bubble.className = 'chat-bubble chat-bubble-assistant text-danger';
+
+        const icon = document.createElement('i');
+        icon.className = offline
+            ? 'bi bi-exclamation-circle me-1'
+            : 'bi bi-exclamation-triangle me-1';
+        bubble.appendChild(icon);
+
+        bubble.appendChild(document.createTextNode(' ' + message));
 
         chatMessages.appendChild(bubble);
         scrollToBottom();
@@ -114,16 +132,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 appendBubble('assistant', data.answer);
             } else {
                 const errorMsg = data.answer || data.error || `Error (${response.status}): Could not get an answer.`;
-                appendBubble('assistant', `<span class="text-danger"><i class="bi bi-exclamation-triangle me-1"></i> ${errorMsg}</span>`);
+                appendErrorBubble(errorMsg);
             }
         } catch (err) {
             typingIndicator.remove();
             console.error('Chat error:', err);
             const isOffline = !navigator.onLine;
-            const displayMsg = isOffline 
-                ? 'Your internet connection seems to be offline. Please check your network.' 
+            const displayMsg = isOffline
+                ? 'Your internet connection seems to be offline. Please check your network.'
                 : `Request failed (${err.message || 'Server timeout'}). Please try again.`;
-            appendBubble('assistant', `<span class="text-danger"><i class="bi bi-exclamation-circle me-1"></i> ${displayMsg}</span>`);
+            appendErrorBubble(displayMsg, isOffline);
         } finally {
             questionInput.disabled = false;
             sendBtn.disabled = false;
