@@ -1,4 +1,4 @@
-import os
+import os 
 from flask import Flask, render_template, request, jsonify
 from config import Config
 from models.database import db
