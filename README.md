@@ -1,4 +1,4 @@
-# LearnTube AI — Full-Stack LLM-Based YouTube Learning Assistant
+# LearnTube AI — Full-Stack LLM-Based YouTube Learning Assistant 
 
 An AI-powered web learning platform for students. Paste educational YouTube video links to extract transcripts, generate structured Smart Notes, create interactive revision flashcards, engage in grounded RAG Q&A with an AI tutor, and perform semantic vector searches across your video library.
 
